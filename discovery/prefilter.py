@@ -1,0 +1,174 @@
+"""S1-S9 deterministic prefilter pipeline.
+
+Each stage filters jobs against profile rules. Stages that need LLM judgment
+(S5/S6 title-keyword matching, S8b industry inference from JD) are deferred
+to Evaluation. Survivors of this pipeline go to LLM screening.
+
+Stage mapping:
+  S1: variant region — already enforced at API call (locations param)
+  S2: work mode acceptance
+  S3: country + relocation logic
+  S4: seniority range
+  S7: company blacklist (exact-match)
+  S8a: industry exclusion (clean-tag match)
+  S9: salary floor (when disclosed; FX-converted)
+"""
+from __future__ import annotations
+
+from typing import Optional
+
+from discovery.sources.base import DiscoveredJob
+from state.profile import Profile
+
+
+# Static FX-to-USD rates. Update periodically. When a currency is missing here,
+# S9 cannot compare and skips the salary filter for that job.
+FX_TO_USD = {
+    "USD": 1.00, "EUR": 1.08, "GBP": 1.27, "CHF": 1.10,
+    "CAD": 0.73, "AUD": 0.66,
+    "PLN": 0.25, "CZK": 0.043, "SEK": 0.095,
+}
+
+# Country recognition list for S3. Longer / multi-word names first so that
+# substring matching prefers the more specific match.
+_KNOWN_COUNTRIES = [
+    "United Kingdom", "United States", "South Korea", "Saudi Arabia",
+    "United Arab Emirates", "Hong Kong",
+    "Germany", "France", "Spain", "Netherlands", "Italy", "Poland", "Portugal",
+    "Sweden", "Denmark", "Finland", "Norway", "Austria", "Switzerland",
+    "Belgium", "Czechia", "Czech Republic", "Lithuania", "Estonia", "Latvia",
+    "Romania", "Bulgaria", "Hungary", "Slovakia", "Slovenia", "Croatia",
+    "Greece", "Ireland", "Iceland", "Luxembourg", "Malta", "Cyprus",
+    "Canada", "Mexico", "USA", "UK",
+    "India", "China", "Japan", "Singapore", "Australia",
+    "Brazil", "Argentina", "Chile", "Colombia",
+    "Israel",
+]
+
+_COUNTRY_ALIASES = {
+    "usa": "united states",      "united states": "usa",
+    "uk": "united kingdom",      "united kingdom": "uk",
+    "czechia": "czech republic", "czech republic": "czechia",
+}
+
+
+def _accepted_modes(profile: Profile) -> set[str]:
+    """Convert profile.work_modes labels to canonical {remote, hybrid, on_site}."""
+    accepted: set[str] = set()
+    for m in profile.work_modes:
+        if m == "Remote":
+            accepted.add("remote")
+        elif m == "Hybrid":
+            accepted.add("hybrid")
+        elif m == "Onsite (includes Hybrid)":
+            accepted.add("on_site")
+            accepted.add("hybrid")  # onsite implies hybrid OK
+    return accepted
+
+
+def _extract_country(job: DiscoveredJob) -> Optional[str]:
+    """Best-effort country extraction. normalized_locations first; raw fallback."""
+    for nl in job.normalized_locations:
+        nl_lower = nl.lower()
+        for country in _KNOWN_COUNTRIES:
+            if country.lower() in nl_lower:
+                return country
+    text = " ".join(job.raw_location).lower()
+    for country in _KNOWN_COUNTRIES:
+        if country.lower() in text:
+            return country
+    return None
+
+
+def _same_country(extracted: str, home: str) -> bool:
+    """Check two country strings refer to the same place, handling aliases."""
+    e, h = extracted.lower(), home.lower()
+    if e == h:
+        return True
+    return _COUNTRY_ALIASES.get(e) == h
+
+
+def _to_usd(amount: float, currency: Optional[str]) -> Optional[float]:
+    """FX-convert to USD. Returns None if currency unknown."""
+    if not currency:
+        return None
+    rate = FX_TO_USD.get(currency)
+    return amount * rate if rate is not None else None
+
+
+def apply(jobs: list[DiscoveredJob],
+          profile: Profile) -> tuple[list[DiscoveredJob], dict[str, int]]:
+    """Run S2 → S9 sequentially. Returns (survivors, per-stage drop counts)."""
+    counts: dict[str, int] = {
+        "input": len(jobs),
+        "s2_work_mode": 0,
+        "s3_country_relocation": 0,
+        "s4_seniority": 0,
+        "s7_company_blacklist": 0,
+        "s8a_industry_blacklist": 0,
+        "s9_salary_floor": 0,
+        "output": 0,
+    }
+
+    accepted_modes = _accepted_modes(profile)
+    excluded_companies = {c.lower() for c in profile.excluded_companies}
+    excluded_industries = {i.lower() for i in profile.excluded_industries}
+
+    survivors: list[DiscoveredJob] = []
+    for j in jobs:
+        # S2: work mode acceptance
+        if accepted_modes and j.work_mode not in accepted_modes:
+            counts["s2_work_mode"] += 1
+            continue
+
+        # S3: country + relocation
+        if profile.home_country:
+            job_country = _extract_country(j)
+            if job_country and not _same_country(job_country, profile.home_country):
+                # Job is in a different country than home
+                if not profile.search_outside_home:
+                    counts["s3_country_relocation"] += 1
+                    continue
+                if not profile.willing_to_relocate and j.work_mode != "remote":
+                    # Not relocating + not remote → can't take this job
+                    counts["s3_country_relocation"] += 1
+                    continue
+                # Remote in another country: keep, residency verified at Pass B
+            # job_country == home OR job_country unknown: continue to next stage
+
+        # S4: seniority
+        if profile.accepted_seniority and j.seniority:
+            if j.seniority not in profile.accepted_seniority:
+                counts["s4_seniority"] += 1
+                continue
+        # j.seniority None: keep, LLM will figure it out
+
+        # S7: company blacklist (exact-match on normalized name)
+        if j.company_name.lower() in excluded_companies:
+            counts["s7_company_blacklist"] += 1
+            continue
+
+        # S8a: industry exclusion via clean tag match
+        if excluded_industries:
+            job_tags_lower = {t.lower() for t in j.industry_tags}
+            if job_tags_lower & excluded_industries:
+                counts["s8a_industry_blacklist"] += 1
+                continue
+
+        # S9: salary floor (when disclosed AND both currencies known to FX table)
+        if (
+            j.salary_disclosed
+            and j.salary_max_yearly
+            and profile.salary_floor_amount
+            and profile.salary_floor_currency
+        ):
+            job_max_usd = _to_usd(j.salary_max_yearly, j.salary_currency)
+            floor_usd = _to_usd(profile.salary_floor_amount, profile.salary_floor_currency)
+            if job_max_usd is not None and floor_usd is not None and job_max_usd < floor_usd:
+                counts["s9_salary_floor"] += 1
+                continue
+
+        survivors.append(j)
+
+    counts["output"] = len(survivors)
+    return survivors, counts
