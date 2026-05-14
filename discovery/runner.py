@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import time
+from collections import defaultdict
 from typing import Optional
 
 from discovery.dedup import dedup
@@ -54,6 +55,8 @@ def run(profile: Profile,
             "after_tracker_check": 0,
             "prefilter_counts": {},
             "after_prefilter": 0,
+            "per_source_counts": {},
+            "per_source_urls": {},
         }
 
     profile_window = WINDOW_DAYS_MAP.get(profile.posted_since_window, 14)
@@ -66,6 +69,15 @@ def run(profile: Profile,
     all_jobs.extend(getro.fetch(profile, since_epoch))
     all_jobs.extend(favorites.fetch(profile, since_epoch))
     discovery_total = len(all_jobs)
+
+    # 1b. Per-source URL sets — used by closure detection downstream.
+    # Favorites have vc_source=None and are NOT subject to VC-source-based
+    # closure (their disappearance from a company's ATS would need
+    # per-company tracking, deferred to a later phase).
+    per_source_urls: dict[str, set[str]] = defaultdict(set)
+    for j in all_jobs:
+        if j.vc_source:
+            per_source_urls[j.vc_source].add(j.canonical_url)
 
     # 2. Cross-source dedup (first-wins; Consider before Getro before Favorites)
     deduped, num_dups = dedup(all_jobs)
@@ -85,5 +97,9 @@ def run(profile: Profile,
         "after_tracker_check": len(new_candidates),
         "prefilter_counts": prefilter_counts,
         "after_prefilter": len(survivors),
+        "per_source_counts": {src: len(urls) for src, urls in per_source_urls.items()},
+        # per_source_urls is consumed by orchestrator for closure detection;
+        # convert to sorted lists for JSON serialization upstream.
+        "per_source_urls": {src: sorted(urls) for src, urls in per_source_urls.items()},
     }
     return survivors, metrics

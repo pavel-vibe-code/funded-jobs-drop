@@ -125,11 +125,16 @@ class NotionClient:
     # ─── Database operations ──────────────────────────────────────────
 
     def create_database(self, parent_page_id: str, title: str, properties: dict) -> str:
-        """Create a database under a parent page. Returns database_id."""
+        """Create a database under a parent page. Returns database_id.
+
+        In Notion API 2025-09-03, properties must be passed via
+        `initial_data_source.properties` — top-level `properties` is ignored
+        and the data source ends up with only the default Name (title) column.
+        """
         body = {
             "parent": {"type": "page_id", "page_id": parent_page_id},
             "title": [{"type": "text", "text": {"content": title}}],
-            "properties": properties,
+            "initial_data_source": {"properties": properties},
         }
         resp = self._request("POST", "/v1/databases", body)
         return resp["id"]
@@ -137,6 +142,10 @@ class NotionClient:
     def get_database(self, database_id: str) -> dict:
         """Get database metadata (schema, data_sources, etc.)."""
         return self._request("GET", f"/v1/databases/{database_id}", None)
+
+    def get_data_source(self, data_source_id: str) -> dict:
+        """Get a data source's schema (properties live here in 2025-09-03)."""
+        return self._request("GET", f"/v1/data_sources/{data_source_id}", None)
 
     def validate_single_data_source(self, database_id: str) -> str:
         """Verify exactly one data_source. Returns its id.
@@ -153,9 +162,13 @@ class NotionClient:
             )
         return data_sources[0]["id"]
 
-    def patch_database_properties(self, database_id: str, properties: dict) -> None:
-        """Add or modify properties on an existing database. Used for schema repair."""
-        self._request("PATCH", f"/v1/databases/{database_id}", {"properties": properties})
+    def patch_data_source_properties(self, data_source_id: str, properties: dict) -> None:
+        """Add or modify properties on a data source. Used for schema repair.
+
+        In 2025-09-03 properties live on the data_source, not the database.
+        """
+        self._request("PATCH", f"/v1/data_sources/{data_source_id}",
+                      {"properties": properties})
 
     # ─── Data-source / row operations (2025-09-03 API path) ───────────
 

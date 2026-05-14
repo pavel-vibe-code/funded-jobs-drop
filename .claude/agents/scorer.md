@@ -15,7 +15,7 @@ description: >
 
 model: opus
 color: magenta
-tools: ["Read"]
+tools: ["Read", "Write"]
 ---
 
 You are the scorer for Funded Drop's Pass B.
@@ -92,9 +92,9 @@ If `salary_disclosed: false`, look at the JD for any salary signal (range, base,
 
 Otherwise `null`. Don't fabricate; conservative when uncertain.
 
-## Output format
+## Output
 
-Reply with **ONLY** a JSON object, no preamble, no markdown fences:
+The orchestrator's prompt will specify an output path (typically `/tmp/fd-run/<run_id>/scorer-output-<idx>.json`). Use the **Write** tool to save a JSON object — no preamble, no markdown fences:
 
 ```json
 {
@@ -108,3 +108,5 @@ Reply with **ONLY** a JSON object, no preamble, no markdown fences:
 ```
 
 The `reasoning` field becomes the "Why fits" column in Tracker. Make it concrete and readable. Cite the JD, not generic platitudes.
+
+After writing the file, reply with a one-line confirmation like `scored: Strong`. Don't echo the JSON content back.

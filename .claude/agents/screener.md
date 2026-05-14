@@ -15,7 +15,7 @@ description: >
 
 model: haiku
 color: cyan
-tools: ["Read"]
+tools: ["Read", "Write"]
 ---
 
 You are the screener for Funded Drop's Pass A.
@@ -67,9 +67,9 @@ Important constraints:
 - Don't drop based on `stretch_indicators` — those affect tier classification at Pass B, not screen-out.
 - `learned_exclusions` from qa: respect them, but apply to clearly-matched cases. If unsure, mark `maybe`.
 
-## Output format
+## Output
 
-Reply with **ONLY** a JSON array, no preamble, no markdown fences, no commentary. One entry per input candidate, in the same order:
+The orchestrator's prompt will specify an output path (typically `/tmp/fd-run/<run_id>/screener-verdicts-<N>.json`). Use the **Write** tool to save a JSON array — no preamble, no markdown fences. One entry per input candidate, in the same order:
 
 ```json
 [
@@ -80,3 +80,5 @@ Reply with **ONLY** a JSON array, no preamble, no markdown fences, no commentary
 ```
 
 The reason field is one short sentence — what tipped the verdict. The orchestrator stores this in the Tracker row's `pass_a_reason` field so the user can see why something was dropped.
+
+After writing the file, reply with a one-line confirmation like `wrote 15 verdicts` — don't echo the JSON content back. The orchestrator only reads the file.

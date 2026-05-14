@@ -256,13 +256,45 @@ def validate_or_patch(client: NotionClient, db_ids: dict[str, str]) -> dict[str,
         if not db_id:
             raise SetupError(f"Missing {name}_db_id in workspace config")
 
-        client.validate_single_data_source(db_id)
-        current = client.get_database(db_id)
-        current_props = set(current.get("properties", {}).keys())
+        # 2025-09-03 API: properties live on the data_source, not the database.
+        ds_id = client.validate_single_data_source(db_id)
+        ds = client.get_data_source(ds_id)
+        current = ds.get("properties", {})
         target_props = props_fn()
-        missing = [p for p in target_props if p not in current_props]
 
+        # Notion auto-creates a single title property when a DB is born — usually
+        # named "Name". Our schema sometimes wants a different title name
+        # ("Title" on Tracker, "Company" on Favorites). Rename it first.
+        target_title_name = next(
+            (p for p, spec in target_props.items()
+             if isinstance(spec, dict) and "title" in spec),
+            None,
+        )
+        current_title_name = next(
+            (p for p, spec in current.items() if spec.get("type") == "title"),
+            None,
+        )
+        applied: list[str] = []
+        if (target_title_name and current_title_name
+                and target_title_name != current_title_name):
+            client.patch_data_source_properties(
+                ds_id, {current_title_name: {"name": target_title_name}}
+            )
+            applied.append(f"renamed title {current_title_name!r}→{target_title_name!r}")
+
+        # Patch missing non-title props in one call.
+        missing = [
+            p for p, spec in target_props.items()
+            if p not in current
+            and p != current_title_name
+            and not (isinstance(spec, dict) and "title" in spec)
+        ]
         if missing:
-            client.patch_database_properties(db_id, {p: target_props[p] for p in missing})
-            patches[name] = missing
+            client.patch_data_source_properties(
+                ds_id, {p: target_props[p] for p in missing}
+            )
+            applied.extend(missing)
+
+        if applied:
+            patches[name] = applied
     return patches
