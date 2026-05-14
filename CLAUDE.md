@@ -62,6 +62,21 @@ State storage: Notion is the single source of truth. No SQLite, no chunked-JSON 
 - MCP vs direct Notion API path duality preserved
 - Two-repo release strategy: private until v0.1.0, public main + tags after
 
+## Cloud Routine compatibility (HARD CONSTRAINT)
+
+This plugin must run in Claude Code's Cloud Routine mode: a fresh container per fire with **no persistent filesystem between fires**. Anything written to disk during a fire is gone when it ends. Notion is the only place state survives.
+
+**Rules every new module must follow:**
+
+- **No SQLite, no JSON state files, no chunked-storage hacks between fires.** Tracker DB IS the state — there is no second source of truth.
+- **`/tmp/fd-run/{run_id}/` is per-fire ephemeral.** Use freely for inter-stage handoff within one fire; assume it vanishes after.
+- **JSONL run log lands in Notion** (`Runs.jsonl_log` text column, capped at ~10kB). On local-mode dev runs, additionally write to disk for inspection. Notion is canonical.
+- **`settings.local.json`** holds the auth token + DB IDs. In cloud routine, this is mounted at agent runtime startup (see parent's `project_routine_env_var_quirk`: setup-script context can't see custom env vars; only agent runtime does). Don't write back to it during fires — only setup writes.
+- **Cost tracking** accumulates per-fire in memory, lands in `Runs.cost_usd`. Don't try to sum across fires locally; query Notion if needed.
+- **Don't cache anything across fires.** First action of a fire is read from Notion; last action writes to Notion. In-fire memory caching is fine.
+
+If a feature seems to need persistent disk state across fires, that's a signal to redesign — push it into Notion or accept that it's a local-only convenience that won't work in production.
+
 ## What was deliberately NOT brought from parent
 
 - `fetch-and-diff.py` (2,243 lines) → replaced by `discovery/runner.py` (~300 LOC target)
