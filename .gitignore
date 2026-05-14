@@ -30,6 +30,9 @@ state-files/
 .claude/worktrees/
 .claude/sessions/
 
+# Dev-only agents (code reviewer + test agents) — local development tooling, not shipped
+.claude/agents/dev/
+
 # Run logs (local mode persistence)
 state/runs/
 /tmp/funded-drop-*.json
