@@ -33,7 +33,16 @@ REQUIRED_KEYS = (
 
 
 def load_workspace() -> WorkspaceConfig:
-    """Load workspace config. Returns dry-run placeholders if FD_DRY_RUN=1."""
+    """Load workspace config. Three paths, in priority order:
+
+    1. **FD_DRY_RUN=1** → return dry-run placeholders (tests).
+    2. **Env vars (Cloud Routine path)** — if `FD_NOTION_TOKEN` is set, all six
+       values come from `FD_*` env vars. Containers are ephemeral per fire and
+       the setup-script context can't materialize files into a known location,
+       so the agent runtime reads them directly from the environment.
+    3. **`~/.claude/settings.local.json` (local laptop path)** — what /fd-setup
+       writes. The persistent-disk form.
+    """
     if os.environ.get("FD_DRY_RUN") == "1":
         return WorkspaceConfig(
             notion_token="dry-run-token",
@@ -43,9 +52,30 @@ def load_workspace() -> WorkspaceConfig:
             favorites_db_id="dry-run-favorites",
             runs_db_id="dry-run-runs",
         )
+
+    env_token = os.environ.get("FD_NOTION_TOKEN")
+    if env_token:
+        env_keys = {
+            "notion_token":    env_token,
+            "parent_page_id":  os.environ.get("FD_PARENT_PAGE_ID", ""),
+            "tracker_db_id":   os.environ.get("FD_TRACKER_DB_ID", ""),
+            "profile_db_id":   os.environ.get("FD_PROFILE_DB_ID", ""),
+            "favorites_db_id": os.environ.get("FD_FAVORITES_DB_ID", ""),
+            "runs_db_id":      os.environ.get("FD_RUNS_DB_ID", ""),
+        }
+        missing = [k for k, v in env_keys.items() if not v]
+        if missing:
+            raise AuthError(
+                f"FD_NOTION_TOKEN is set but missing env vars: "
+                f"{[f'FD_{k.upper()}' for k in missing]}"
+            )
+        return WorkspaceConfig(**env_keys)
+
     if not SETTINGS_PATH.exists():
         raise AuthError(
-            f"Settings file not found at {SETTINGS_PATH}. Run /fd-setup first."
+            f"Settings file not found at {SETTINGS_PATH} and no FD_* env vars set. "
+            f"Run /fd-setup, or set FD_NOTION_TOKEN + FD_PARENT_PAGE_ID + "
+            f"FD_{{TRACKER,PROFILE,FAVORITES,RUNS}}_DB_ID for Cloud Routine use."
         )
     try:
         data = json.loads(SETTINGS_PATH.read_text())
