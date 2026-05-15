@@ -2,6 +2,19 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.3 — 2026-05-15
+
+First production routine fire surfaced two bugs that local e2e didn't catch.
+
+### Fixed
+- **Getro 403 in Cloud Routine egress.** All 5 Getro VCs (Accel, GC, Atomico, Index, Insight) returned 403 from the routine container. Root cause: `discovery/sources/getro.py` calls `api.getro.com` (the centralized Algolia-style API), but `INSTALL.md`'s allowed-domains list only included the per-VC subdomains (which are sent as `Origin` headers, not request targets). Adding `api.getro.com` to the routine egress allowlist fixes it. INSTALL.md updated; users with active routines need to add the host and re-fire.
+- **Silent source-fetch failures.** The first production fire reported `errors_count: 0` and an empty `errors_summary` despite all 5 Getro sources failing. Root cause: `consider.fetch()`, `getro.fetch()`, `favorites.fetch()` swallowed per-VC errors via `print()` only. Refactored all three to return `(jobs, errors)` tuples; `discovery/runner.py` aggregates into `source_errors`; `orchestrator.py:_build_errors_summary()` composes them into the Runs DB row.
+- **SambaNova AI-50 seed slug.** Was `(lever, "sambanova")` — that's a 404. SambaNova publishes on Greenhouse under `sambanovasystems` (24 active jobs verified). Fixed in `config/ai50_seed.py`.
+
+### Added
+- **AI-50 seed validation at enable time.** `ai50_seed_loader.enable()` now probes each ATS slug before writing to Favorites. Invalid slugs are skipped and logged with `invalid_slugs` in the return dict, so a stale seed entry doesn't accumulate broken Favorite rows. Affects HeyGen, Surge AI, World Labs, Clay (slugs need research for v0.1.4).
+- **Broader allowed-domains in INSTALL.md** — adds the rest of the ATS registry's hosts (TeamTailor, Homerun, Comeet, SmartRecruiters, Workable, Recruitee, Personio, BambooHR) so non-AI-50 user Favorites work in Cloud Routine without per-add allowlist tweaks.
+
 ## v0.1.2 — 2026-05-15
 
 User-facing docs + Cloud Routine quality-of-life.

@@ -63,16 +63,20 @@ def _construct_url(ats_type: str, slug: str, job_id: str) -> str:
     return patterns.get(ats_type, f"https://example.com/unknown/{slug}/{job_id}")
 
 
-def fetch(profile: Profile, since_epoch: int) -> list[DiscoveredJob]:
+def fetch(profile: Profile, since_epoch: int) -> tuple[list[DiscoveredJob], list[str]]:
     """Fetch active jobs for every active Favorite via its ATS adapter.
 
-    `since_epoch` is not used here — favorites adapters return all active jobs;
-    the runner's prefilter or evaluation step handles recency.
+    Returns (jobs, per-favorite error strings). Errors propagate up to the
+    Runs DB's errors_summary so silently-broken Favorite slugs are visible.
+
+    `since_epoch` is not used here — favorites adapters return all active
+    jobs; the runner's prefilter or evaluation step handles recency.
     """
     if os.environ.get("FD_DRY_RUN") == "1":
-        return []
+        return [], []
 
     jobs: list[DiscoveredJob] = []
+    errors: list[str] = []
     for fav in read_active():
         if not fav.ats_type or not fav.ats_slug:
             continue
@@ -83,12 +87,16 @@ def fetch(profile: Profile, since_epoch: int) -> list[DiscoveredJob]:
                 careers_url=fav.careers_url,
             )
             if err:
-                print(f"[Favorites/{fav.name}] adapter error: {err}")
+                msg = f"Favorites/{fav.name} ({fav.ats_type}:{fav.ats_slug}): {err}"
+                print(f"  [{msg}]")
+                errors.append(msg)
                 continue
             for job_id in active_ids:
                 jobs.append(_convert(
                     job_id, fav.name, fav.ats_slug, fav.ats_type, fav.careers_url
                 ))
         except Exception as e:
-            print(f"[Favorites/{fav.name}] unexpected error: {type(e).__name__}: {e}")
-    return jobs
+            msg = f"Favorites/{fav.name}: {type(e).__name__}: {e}"
+            print(f"  [{msg}]")
+            errors.append(msg)
+    return jobs, errors

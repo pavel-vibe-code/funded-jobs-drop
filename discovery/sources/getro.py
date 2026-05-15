@@ -181,18 +181,25 @@ def _fetch_one_vc(vc_name: str, host: str, network_id: int,
     return jobs
 
 
-def fetch(profile: Profile, since_epoch: int) -> list[DiscoveredJob]:
-    """Fetch from all 5 Getro VCs since since_epoch."""
+def fetch(profile: Profile, since_epoch: int) -> tuple[list[DiscoveredJob], list[str]]:
+    """Fetch from all 5 Getro VCs. Returns (jobs, per-VC error strings).
+
+    Per-VC errors surface in the orchestrator's errors_summary so Cloud Routine
+    fires don't silently swallow upstream-block / egress-misconfig failures.
+    """
     if os.environ.get("FD_DRY_RUN") == "1":
-        return []
+        return [], []
 
     all_jobs: list[DiscoveredJob] = []
+    errors: list[str] = []
     for vc in GETRO_VCS:
         try:
             jobs = _fetch_one_vc(
                 vc["name"], vc["subdomain"], vc["network_id"], since_epoch, profile
             )
             all_jobs.extend(jobs)
-        except (urllib.error.URLError, json.JSONDecodeError) as e:
-            print(f"[Getro/{vc['name']}] fetch error: {type(e).__name__}: {e}")
-    return all_jobs
+        except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError) as e:
+            err = f"Getro/{vc['name']}: {type(e).__name__}: {e}"
+            print(f"  [{err}]")
+            errors.append(err)
+    return all_jobs, errors

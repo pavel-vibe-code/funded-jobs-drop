@@ -400,7 +400,12 @@ def write_stage(run_id: str) -> dict:
             "duration_s":            0,
             "effective_window_days": dmetrics.get("effective_window_days", 14),
             "profile_window_days":   dmetrics.get("profile_window_days", 14),
-            "errors_count":          len(failures),
+            "errors_count":          len(failures) + len(dmetrics.get("source_errors") or []),
+            "errors_summary":        _build_errors_summary(
+                source_errors=dmetrics.get("source_errors") or [],
+                jd_fetch_failed=failures,
+                closure_failed=dmetrics.get("closure_failed_count", 0),
+            ),
             "recovery_widened":      (
                 dmetrics.get("effective_window_days", 14)
                 > dmetrics.get("profile_window_days", 14)
@@ -418,6 +423,27 @@ def write_stage(run_id: str) -> dict:
     print(f"write_stage: {write_result['written']} written, {write_result['failed']} failed; "
           f"{len(pursue_samples)} Pursue, {len(consider_samples)} Consider")
     return write_result
+
+
+def _build_errors_summary(source_errors: list, jd_fetch_failed: list,
+                          closure_failed: int) -> str:
+    """One-paragraph errors_summary for the Runs DB row.
+
+    Surfaces per-source fetch failures (Getro 403, Consider VC timeout, etc.),
+    JD-fetch failures, and closure-marking failures so the user can see what
+    went wrong without reading the raw routine log. Capped at ~1500 chars
+    to stay inside Notion's rich-text limits.
+    """
+    parts: list[str] = []
+    if source_errors:
+        parts.append(f"Source fetch ({len(source_errors)}): " + "; ".join(source_errors[:10]))
+        if len(source_errors) > 10:
+            parts.append(f"… and {len(source_errors) - 10} more")
+    if jd_fetch_failed:
+        parts.append(f"JD fetch failed ({len(jd_fetch_failed)}) — see jd_fetch_failed rows in Tracker")
+    if closure_failed:
+        parts.append(f"Closure-marking failed ({closure_failed})")
+    return " | ".join(parts)[:1500]
 
 
 def _build_verdict(cand: dict, url: str, tier_norm: str, scored: dict,

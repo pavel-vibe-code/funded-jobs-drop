@@ -214,21 +214,26 @@ def _fetch_one_vc(vc_name: str, host: str, fallback_board_id: str,
     return jobs
 
 
-def fetch(profile: Profile, since_epoch: int) -> list[DiscoveredJob]:
-    """Fetch from all 7 Consider VCs since since_epoch.
+def fetch(profile: Profile, since_epoch: int) -> tuple[list[DiscoveredJob], list[str]]:
+    """Fetch from all 7 Consider VCs. Returns (jobs, per-VC error strings).
 
-    Individual VC failures are logged and don't abort the whole fetch.
+    Individual VC failures don't abort the whole fetch; each surfaces as a
+    string in the second tuple element so the orchestrator can report them
+    in the Runs DB's errors_summary.
     """
     if os.environ.get("FD_DRY_RUN") == "1":
-        return []  # fixtures handled at higher level
+        return [], []  # fixtures handled at higher level
 
     all_jobs: list[DiscoveredJob] = []
+    errors: list[str] = []
     for vc in CONSIDER_VCS:
         try:
             jobs = _fetch_one_vc(
                 vc["name"], vc["subdomain"], vc["board_id"], since_epoch, profile
             )
             all_jobs.extend(jobs)
-        except (urllib.error.URLError, RuntimeError, json.JSONDecodeError) as e:
-            print(f"[Consider/{vc['name']}] fetch error: {type(e).__name__}: {e}")
-    return all_jobs
+        except (urllib.error.HTTPError, urllib.error.URLError, RuntimeError, json.JSONDecodeError) as e:
+            err = f"Consider/{vc['name']}: {type(e).__name__}: {e}"
+            print(f"  [{err}]")
+            errors.append(err)
+    return all_jobs, errors

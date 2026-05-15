@@ -37,7 +37,9 @@ AI50_SEED: list[AI50SeedEntry] = [
     {"name": "Rogo",                   "careers_url": "https://www.rogo.ai/careers",          "ats_type": "ashby",      "ats_slug": "rogo"},
     {"name": "Runway",                 "careers_url": "https://runwayml.com/careers",         "ats_type": "greenhouse", "ats_slug": "runway"},
     {"name": "Safe Superintelligence", "careers_url": "https://ssi.inc/careers",              "ats_type": "ashby",      "ats_slug": "ssi"},
-    {"name": "SambaNova",              "careers_url": "https://sambanova.ai/careers",         "ats_type": "lever",      "ats_slug": "sambanova"},
+    # Corrected v0.1.3: was (lever, "sambanova") — that's not their public slug.
+    # SambaNova publishes on Greenhouse under 'sambanovasystems' (verified 2026-05-15).
+    {"name": "SambaNova",              "careers_url": "https://sambanova.ai/careers",         "ats_type": "greenhouse", "ats_slug": "sambanovasystems"},
     {"name": "Surge AI",               "careers_url": "https://www.surgehq.ai/careers",       "ats_type": "ashby",      "ats_slug": "surgehq"},
     {"name": "World Labs",             "careers_url": "https://www.worldlabs.ai/careers",     "ats_type": "ashby",      "ats_slug": "worldlabs"},
     {"name": "Clay",                   "careers_url": "https://www.clay.com/careers",         "ats_type": "ashby",      "ats_slug": "clay"},

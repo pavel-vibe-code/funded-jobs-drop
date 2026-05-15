@@ -57,17 +57,22 @@ def run(profile: Profile,
             "after_prefilter": 0,
             "per_source_counts": {},
             "per_source_urls": {},
+            "source_errors": [],
         }
 
     profile_window = WINDOW_DAYS_MAP.get(profile.posted_since_window, 14)
     effective_days = effective_window_days(profile_window, last_fire_at_epoch)
     since_epoch = int(time.time() - effective_days * 86400)
 
-    # 1. Fetch from all sources (sequential for v0.1.0; parallel later if needed)
+    # 1. Fetch from all sources (sequential for v0.1.0; parallel later if needed).
+    # Each source returns (jobs, errors); errors propagate up so the Runs DB
+    # surfaces per-source failures (don't silently swallow Getro 403s etc.).
     all_jobs: list[DiscoveredJob] = []
-    all_jobs.extend(consider.fetch(profile, since_epoch))
-    all_jobs.extend(getro.fetch(profile, since_epoch))
-    all_jobs.extend(favorites.fetch(profile, since_epoch))
+    source_errors: list[str] = []
+    for src_fn in (consider.fetch, getro.fetch, favorites.fetch):
+        jobs, errs = src_fn(profile, since_epoch)
+        all_jobs.extend(jobs)
+        source_errors.extend(errs)
     discovery_total = len(all_jobs)
 
     # 1b. Per-source URL sets — used by closure detection downstream.
@@ -101,5 +106,6 @@ def run(profile: Profile,
         # per_source_urls is consumed by orchestrator for closure detection;
         # convert to sorted lists for JSON serialization upstream.
         "per_source_urls": {src: sorted(urls) for src, urls in per_source_urls.items()},
+        "source_errors": source_errors,
     }
     return survivors, metrics
