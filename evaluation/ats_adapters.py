@@ -59,10 +59,13 @@ def http_get(url: str, accept: str = "application/json") -> Tuple[Optional[bytes
 
 ASHBY_API      = "https://api.ashbyhq.com/posting-api/job-board/{slug}"
 
-# Greenhouse: classic + EU data residency. Same path structure, different host.
+# Greenhouse: classic host serves all boards. The EU host
+# `boards-api.eu.greenhouse.io` was inherited from the parent project but
+# is NXDOMAIN in DNS — Greenhouse's EU data-residency boards are still
+# served by the classic host, the EU URL was never a real endpoint.
+# Dropped v0.1.4 so we don't waste a per-board lookup on a known-bad host.
 GREENHOUSE_API_HOSTS = [
-    "https://boards-api.greenhouse.io",       # classic / US
-    "https://boards-api.eu.greenhouse.io",    # EU data residency
+    "https://boards-api.greenhouse.io",
 ]
 GREENHOUSE_API_PATH = "/v1/boards/{slug}/jobs"
 

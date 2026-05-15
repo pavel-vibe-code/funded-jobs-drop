@@ -4,7 +4,7 @@ All notable changes to Funded Drop. Format follows [Keep a Changelog](https://ke
 
 ## v0.1.4 — 2026-05-15
 
-Two bugs from production fire #2: Favorites flowed through Pass A with empty titles (wasting ~$120 of Opus on 473 unscoreable candidates); title + location stayed blank in Tracker because JD-fetch threw away the structured fields it received from the ATS API.
+Two bugs from production fire #2 (Favorites Pass A + missing structured fields) plus AI-50 seed reconciliation against drift.
 
 ### Fixed
 - **Favorites bypass Pass A.** Favorites discovery is two-phase by design (returns IDs at discovery; title/location fill at JD fetch). With empty title + location, the screener marked everything `maybe` and dumped 473 unscoreable candidates onto Pass B. Now Favorites auto-promote from discovery directly to JD fetch + Pass B, skipping Pass A entirely. Saves screener tokens; eliminates the "all 416 land in Skim" failure mode. (`orchestrator.discovery_stage` writes `auto-promote-favorites.json`; `screener_aggregate` merges it into survivors with `_pass_a_verdict: auto`.)
@@ -12,6 +12,8 @@ Two bugs from production fire #2: Favorites flowed through Pass A with empty tit
 
 ### Changed
 - Discovery metrics now include `auto_promoted_favorites`. Screener stats include `auto_promoted_favorites` and the printout differentiates "screened" vs "auto-promoted."
+- **AI-50 seed reconciliation.** `ai50_seed_loader.enable()` is now idempotent: re-running converges on the current `AI50_SEED` list. Identity is by NAME, not slug — so when a company moves ATSes or changes its slug, the existing Notion row is updated in place via `state.favorites.update_ats_config()` rather than creating a duplicate. Removed seed entries (Surge AI) get deactivated. Six v0.1.4 AI-50 corrections from live probing: Cohere `greenhouse:cohere → ashby:cohere` (129 jobs), Runway `greenhouse:runway → ashby:runway` (4 jobs), HeyGen `ashby:heygen → greenhouse:heygen` (25 jobs), World Labs `ashby:worldlabs → greenhouse:worldlabs` (12 jobs), Clay `ashby:clay → ashby:claylabs` (76 jobs), SambaNova kept from v0.1.3 (`greenhouse:sambanovasystems`, 24 jobs). Surge AI deactivated (no public ATS).
+- **Greenhouse EU host removed** from `ats_adapters.py:GREENHOUSE_API_HOSTS`. The v1.5-inherited `boards-api.eu.greenhouse.io` is NXDOMAIN — never was a real endpoint. Greenhouse's EU data-residency boards are still served by `boards-api.greenhouse.io`. Removing it saves a per-board lookup against a known-bad host.
 
 ## v0.1.3 — 2026-05-15
 

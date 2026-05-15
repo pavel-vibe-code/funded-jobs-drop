@@ -84,3 +84,21 @@ def set_active(page_id: str, active: bool) -> None:
     config = load_workspace()
     client = NotionClient(config.notion_token)
     client.update_page(page_id, {"active": to_checkbox(active)})
+
+
+def update_ats_config(page_id: str, ats_type: str, ats_slug: str) -> None:
+    """Update a favorite's ats_type + ats_slug in place.
+
+    Used by ai50_seed_loader's reconcile path when a seed entry's slug
+    drifts (e.g. company moves from Ashby to Greenhouse). Avoids creating
+    a duplicate row alongside the stale one.
+    """
+    if os.environ.get("FD_DRY_RUN") == "1":
+        return
+    config = load_workspace()
+    client = NotionClient(config.notion_token)
+    client.update_page(page_id, {
+        "ats_type": to_select(ats_type),
+        "ats_slug": to_text(ats_slug),
+        "active":   to_checkbox(True),  # reactivate if it had been disabled
+    })
