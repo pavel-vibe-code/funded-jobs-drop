@@ -15,7 +15,7 @@ from state.config import load_workspace
 from state.notion_client import NotionClient
 from state.properties import (
     extract_date, extract_text,
-    to_date, to_number, to_select, to_text, to_title,
+    to_date, to_number, to_select, to_text, to_text_chunked, to_title,
 )
 
 
@@ -35,9 +35,11 @@ def create(run_id: str,
     # Display name: "EU run · 2026-05-14 09:00"
     name = f"{variant} run · {started_at_iso[:16].replace('T', ' ')}"
 
-    # Notion rich_text caps at ~2000 chars per chunk; cap the jsonl_log
-    # rather than risk a Notion validation error. Real logs go on disk.
-    capped_log = jsonl_log[:10000] if jsonl_log else ""
+    # Notion rich_text caps individual chunks at 2000 chars but allows many
+    # chunks per property — to_text_chunked() splits at ≤1900-char boundaries.
+    # Cap total length at 40kB so we keep the Notion property readable in UI
+    # and don't risk hitting the per-property limit.
+    capped_log = jsonl_log[:40000] if jsonl_log else ""
 
     props = {
         "Name":             to_title(name),
@@ -57,7 +59,7 @@ def create(run_id: str,
         "pass_b_scored":    to_number(metrics.get("pass_b_scored", 0)),
         "errors_count":     to_number(metrics.get("errors_count", 0)),
         "errors_summary":   to_text(metrics.get("errors_summary", "")),
-        "jsonl_log":        to_text(capped_log),
+        "jsonl_log":        to_text_chunked(capped_log),
     }
     return client.create_page(config.runs_db_id, props)
 

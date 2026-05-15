@@ -575,6 +575,93 @@ def _build_errors_summary(source_errors: list, jd_fetch_failed: list,
     return " | ".join(parts)[:1500]
 
 
+def _build_jsonl_log(wd: Path, verdicts: list[dict]) -> str:
+    """Aggregate per-stage state files into a JSONL debug log for Runs DB.
+
+    One JSON object per stage, newline-separated. Designed to fit in ~40kB
+    (Notion's per-property cap with chunking). Picks the smallest-but-most-
+    useful fields from each stage; the bulk files (candidates.json,
+    all-verdicts.json, scorer-input-*) stay on disk for local-fire debugging
+    but don't ride into Notion.
+
+    Stages logged:
+      discovery, screener, jd_fetch, post_filter, write, finalize.
+    """
+    lines: list[str] = []
+
+    def _add(stage: str, payload: dict) -> None:
+        lines.append(json.dumps({"stage": stage, **payload}, default=str))
+
+    # Stage 1: discovery
+    dmetrics = _load_json_or(wd / "discovery-metrics.json", {})
+    if dmetrics:
+        _add("discovery", {
+            "raw":                dmetrics.get("discovery_total"),
+            "after_dedup":        dmetrics.get("after_dedup"),
+            "after_prefilter":    dmetrics.get("after_prefilter"),
+            "per_source_counts":  dmetrics.get("per_source_counts", {}),
+            "prefilter_drops":    dmetrics.get("prefilter_counts", {}),
+            "effective_window":   dmetrics.get("effective_window_days"),
+            "auto_promoted_favs": dmetrics.get("auto_promoted_favorites"),
+            "closed_count":       dmetrics.get("closed_count"),
+            "healthy_sources":    dmetrics.get("healthy_sources", []),
+            "source_errors":      (dmetrics.get("source_errors") or [])[:20],
+        })
+
+    # Stage 2: screener
+    sstats = _load_json_or(wd / "screener-stats.json", {})
+    if sstats:
+        _add("screener", sstats)
+
+    # Stage 3: jd_fetch
+    jstats = _load_json_or(wd / "jd-fetch-stats.json", {})
+    failures = _load_json_or(wd / "jd-failed.json", [])
+    if jstats or failures:
+        _add("jd_fetch", {
+            **jstats,
+            "failed_samples": [
+                {"company": f.get("company_name") or f.get("company"),
+                 "title":   (f.get("title") or "")[:80],
+                 "error":   f.get("_jd_fetch_error", "")[:120]}
+                for f in failures[:20]
+            ],
+        })
+
+    # Stage 3b: post-JD prefilter (Favorites only)
+    pfdropped = _load_json_or(wd / "post-filter-dropped.json", [])
+    if pfdropped:
+        _add("post_filter", {
+            "dropped_count": len(pfdropped),
+            "samples": [
+                {"company": d.get("company"),
+                 "title":   (d.get("title") or "")[:80],
+                 "reason":  d.get("reason", "")[:120]}
+                for d in pfdropped[:20]
+            ],
+        })
+
+    # Stage 4: write
+    _add("write", {
+        "verdicts_total": len(verdicts),
+        "by_tier": {
+            tier: sum(1 for v in verdicts if v.get("match") == tier)
+            for tier in ("Strong — Pursue", "Decent — Consider", "Stretch — Skim")
+        },
+        "pursue_titles": [
+            v.get("title") for v in verdicts
+            if v.get("match") == "Strong — Pursue"
+        ][:10],
+    })
+
+    # Stage 5: finalize (assembled inline so this log captures the current
+    # state — finalize-result.json is written immediately after runs_create).
+    _add("finalize", {
+        "note": "see finalize-result.json on container for runs_page_id + webhook_status",
+    })
+
+    return "\n".join(lines)
+
+
 def _build_verdict(cand: dict, url: str, tier_norm: str, scored: dict,
                    now_iso: str, profile_hash: str, run_id: str, status: str) -> dict:
     """Build a verdict dict for state.tracker.write_evaluated."""
@@ -657,6 +744,11 @@ def finalize_stage(run_id: str) -> dict:
 
     metrics = {**sum_input["metrics"], "total_new": len(verdicts)}
 
+    # Build a compact JSONL debug log from the per-fire /tmp/ files. Stored
+    # in Runs.jsonl_log so post-mortem debugging of a Cloud Routine fire can
+    # be done from Notion alone — no need to grab container logs.
+    jsonl_log = _build_jsonl_log(wd, verdicts)
+
     try:
         runs_page_id = runs_create(
             run_id=run_id,
@@ -664,6 +756,7 @@ def finalize_stage(run_id: str) -> dict:
             variant=metrics.get("variant", "EU"),
             summary=summary,
             metrics=metrics,
+            jsonl_log=jsonl_log,
         )
         runs_error = None
     except Exception as e:

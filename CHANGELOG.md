@@ -2,6 +2,18 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.7 — 2026-05-15
+
+Routine-debug visibility: populates `Runs.jsonl_log` so a failed Cloud Routine fire can be post-mortemed from Notion alone — no need to grab container logs.
+
+### Added
+- **`_build_jsonl_log()` in orchestrator** — at finalize time, aggregates the small/useful `/tmp/fd-run/<run_id>/` state files into a JSONL string: one line per stage (discovery, screener, jd_fetch, post_filter, write, finalize). Picks per-stage metrics, per-source counts, source-fetch errors, jd-fetch failure samples (top 20), post-filter drop samples (top 20), verdict-tier breakdown, top Pursue titles. Skips bulk files (candidates.json, all-verdicts.json, scorer-input-*) so the log stays compact. Typical size: 3–10 kB per fire.
+- **`state/properties.to_text_chunked()`** — Notion rich_text caps individual chunks at 2000 chars. New helper splits at ≤1900-char boundaries so we can pack tens of kB into one property without hitting the API's per-chunk limit.
+
+### Changed
+- `state/runs.create()` jsonl_log cap raised from 10kB → 40kB (chunked write).
+- `Runs.jsonl_log` column on existing Notion DBs will start populating from the next fire.
+
 ## v0.1.6 — 2026-05-15
 
 Cut Favorites Pass B cost dramatically by re-applying deterministic prefilter after JD fetch enriches them.

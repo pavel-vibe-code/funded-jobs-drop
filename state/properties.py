@@ -79,6 +79,27 @@ def to_text(value: str) -> dict:
     return {"rich_text": [{"type": "text", "text": {"content": value or ""}}]}
 
 
+_NOTION_RICH_TEXT_CHUNK = 1900  # Notion caps individual rich_text chunks at 2000
+
+
+def to_text_chunked(value: str) -> dict:
+    """For rich_text properties carrying long content (e.g. jsonl_log).
+
+    Notion rejects any single rich_text content > 2000 chars. Splitting
+    into ≤1900-char chunks lets us pack tens of kB of debug log into one
+    property cleanly.
+    """
+    if not value:
+        return {"rich_text": []}
+    chunks = [
+        value[i:i + _NOTION_RICH_TEXT_CHUNK]
+        for i in range(0, len(value), _NOTION_RICH_TEXT_CHUNK)
+    ]
+    return {"rich_text": [
+        {"type": "text", "text": {"content": c}} for c in chunks
+    ]}
+
+
 def to_select(value: Optional[str]) -> dict:
     if not value:
         return {"select": None}
