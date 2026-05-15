@@ -2,6 +2,18 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.12 — 2026-05-15
+
+Pass A screener tightened — pursue_blockers + stretch_indicators now both drive hard drops at Pass A. Plus a resilience patch in `postjd_screen_apply` for when agents drop fields from their JSON output.
+
+### Changed
+- **`screener.md` agent spec rewritten with hard-drop rules.** Previously the spec mentioned `pursue_blockers` only in the keep-criterion bullet, and explicitly told the agent to *ignore* `stretch_indicators` ("those affect tier classification at Pass B, not screen-out"). The "When in doubt, prefer maybe over drop" rule trumped everything — visible eng-coder/sales-quota/HR title-pattern hits fell through to `maybe` and reached Opus.
+  New structure: Step 1 hard-drop rules (pursue_blockers, stretch_indicators with clear title-pattern hits, learned_exclusions) fire BEFORE keep/maybe judgment. Step 2 (keep/maybe/drop) only applies when no hard rule fired. "Prefer maybe" restricted to title-relevance ambiguity, NOT visible blocker hits.
+- **Dry-run validation** (3151 raw, Pavel's workspace): VC Pass A drops jumped from 220→234 with cleaner reasoning. All 234 audited as legit — every flagged "exception word" (Solutions Engineer / Implementation / etc.) turned out to be a different-blocker drop (e.g. Wiz Solutions Engineer Italy → Italian-language blocker fires separately). Net Pass B count dropped from 23 → 6 (4× reduction). Final fire cost projection: **~$3.40 total** (~$0.40 Haiku + ~$3 Opus) vs ~$70 in fire #3.
+
+### Fixed
+- **`postjd_screen_apply` positional-match fallback.** Dispatched Haiku agents sometimes omit `canonical_url` from their verdict JSON despite the spec requiring it. When the URL is missing, fall back to matching verdicts to scorer-input files positionally against the corresponding `favorites-postjd-batch-{N}.json`. Belt-and-suspenders so a single agent's output drift doesn't break the apply step.
+
 ## v0.1.11 — 2026-05-15
 
 Haiku Pass A on post-JD Favorites — catches ambiguous-location cases the deterministic city-map misses.

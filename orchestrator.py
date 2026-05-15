@@ -1135,8 +1135,25 @@ def postjd_screen_apply(run_id: str) -> dict:
         except json.JSONDecodeError as e:
             print(f"  warn: {vf.name} malformed: {e}; skipping")
             continue
-        for v in verdicts:
+
+        # Belt-and-suspenders: if the agent dropped canonical_url from its
+        # output, fall back to matching by position against the matching
+        # batch file. The screener.md spec requires canonical_url, but
+        # dispatched agents have been observed to omit it.
+        batch_idx = vf.stem.replace("postjd-verdicts-", "")
+        batch_file = wd / f"favorites-postjd-batch-{batch_idx}.json"
+        positional_urls: list[str] = []
+        if batch_file.exists():
+            try:
+                bd = json.loads(batch_file.read_text())
+                positional_urls = [c.get("canonical_url", "") for c in bd.get("candidates", [])]
+            except json.JSONDecodeError:
+                positional_urls = []
+
+        for pos, v in enumerate(verdicts):
             url = v.get("canonical_url")
+            if not url and pos < len(positional_urls):
+                url = positional_urls[pos]
             verdict = v.get("verdict", "")
             if verdict == "drop":
                 drop_verdicts_seen += 1

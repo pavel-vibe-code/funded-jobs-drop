@@ -82,17 +82,18 @@ The qa learning loop (`/fd-recycle-feedback`) reads your Match-quality edits in 
 
 ## Cost guide
 
-Per-fire LLM cost (real numbers from the local e2e against ~2,500 raw jobs, ~300 prefilter survivors):
+Per-fire LLM cost (real numbers from the v0.1.12 dry-run against 3,151 raw jobs, ~983 prefilter survivors, on a strict EU-only Director-track profile):
 
-| Pass | Model | Calls × tokens | Cost |
+| Stage | Model | Calls × tokens | Cost |
 |---|---|---|---|
-| Pass A screener | Haiku | ~22 × 37k | ~$0.20 |
-| Pass B scorer | Opus | ~27 × 25k | ~$7 |
+| Pass A on VC batches | Haiku | ~17 × 37k | ~$0.20 |
+| Pass A on post-JD Favorites | Haiku | ~2 × 26k | ~$0.01 |
+| Pass B scorer | Opus | ~6 × 26k | ~$3 |
 | Summary | Sonnet | 1 × 20k | ~$0.05 |
-| **Per fire** | | | **~$7-8** |
-| **Per month** (weekly) | | | **~$30** |
+| **Per fire** | | | **~$3-4** |
+| **Per month** (weekly) | | | **~$15-20** |
 
-The scorer dominates. Biggest cost lever: tightening `pursue_blockers` so the screener thins more aggressively → fewer Pass B calls.
+The scorer dominates per-call but the volume is small after two-stage filtering: deterministic prefilter (S1a variant region, S2-S9) plus tightened Pass A screener (hard-drops on pursue_blockers + stretch_indicators) collapse ~3,000 raw → ~6-10 reaching Opus. Tightening `pursue_blockers` further is the biggest cost lever.
 
 ## Slash commands
 

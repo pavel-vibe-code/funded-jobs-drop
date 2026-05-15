@@ -55,17 +55,29 @@ Read the file. Process the whole batch as one call — that's the point of batch
 
 ## Your task
 
-For each candidate, return a verdict:
+For each candidate, apply the hard-drop rules FIRST. Only when they don't fire, fall through to keep/maybe/drop judgment.
 
-- **`keep`** — clear strong signal from title + skills + tags. Title matches the user's `interest_description`, no `pursue_blockers` visible in structured tags, role looks like a confident fit at first glance.
-- **`maybe`** — uncertain. Title is adjacent but not exact. Skills overlap but not strong. Defer to deeper Pass B. **When in doubt, prefer maybe over drop.**
-- **`drop`** — confident no. Title is a clear domain mismatch (e.g. user wants PM and this is "Senior Quantitative Researcher"), or seniority gap is obvious from the tags.
+### Step 1 — Hard drop rules (apply BEFORE keep/maybe judgment)
 
-Important constraints:
+1. **`profile.pursue_blockers` title patterns → drop.**
+   The user's `pursue_blockers` field lists title patterns that DISQUALIFY a job. Treat each comma- or sentence-separated phrase as a pattern. If the candidate's title (or company, or industry tags) clearly matches a pattern, return `drop` — do NOT fall back to `maybe`. Read the field literally: if it says *"Software/Backend/Frontend/Fullstack/ML/Data Engineer (unless FDE, Solutions, Customer Engineer, Implementation, Engagement)"*, then "Senior QA Engineer" / "ML Engineer" / "Threat Intelligence Researcher" / "Staff Infrastructure Engineer" → drop. Same for finance/marketing/sales-quota/HR/recruiter title patterns when listed.
+
+2. **`profile.stretch_indicators` title patterns that CLEARLY hit → drop.**
+   Yes, this differs from the prior version of this spec — stretch_indicators that show up as visible title patterns are real Pass A drop signals. If the user's `stretch_indicators` says *"IC-seniority role (Engagement Manager, TAM, Senior PM) for a Director-track candidate"* and the title is exactly that pattern → drop (not maybe). Pass B's Skim tier on these would only clutter the Tracker. Ambiguous title-relevance still falls to `maybe`; clear stretch_indicator pattern matches drop.
+
+3. **`profile.learned_exclusions` patterns → drop** (same logic as pursue_blockers — these are qa-refined rules from prior feedback).
+
+### Step 2 — keep / maybe / drop (only if no hard rule fired)
+
+- **`keep`** — clear strong signal from title + skills + tags. Title matches the user's `interest_description`, role looks like a confident fit at first glance.
+- **`maybe`** — title-relevance is ambiguous (adjacent but not exact; defer to Pass B for deeper JD eval). **Prefer maybe over drop only when no hard rule above fired.**
+- **`drop`** — title is a clear domain mismatch unrelated to the hard rules above (e.g. user wants CX leadership and this is "Quantitative Researcher in Finance"), or seniority gap is obvious.
+
+### Constraints
+
 - You only have STRUCTURED tags — no JD text. Don't speculate about JD content.
-- Don't apply hard filters that were already done deterministically (company blacklist, industry tag exclusion, salary floor, work mode, country). Those candidates won't reach you.
-- Don't drop based on `stretch_indicators` — those affect tier classification at Pass B, not screen-out.
-- `learned_exclusions` from qa: respect them, but apply to clearly-matched cases. If unsure, mark `maybe`.
+- Don't re-apply hard filters that were already done deterministically (company blacklist, industry tag exclusion, salary floor, work mode, country). Those candidates won't reach you.
+- The "prefer maybe" rule applies to title-adjacency ambiguity, NOT to visible blocker/indicator patterns.
 
 ## Output
 
