@@ -31,6 +31,46 @@ REQUIRED_KEYS = (
     "tracker_db_id", "profile_db_id", "favorites_db_id", "runs_db_id",
 )
 
+# Canonical DB titles created by /fd-setup. Used by name→id discovery so a
+# Cloud Routine user only needs to set FD_NOTION_TOKEN + FD_PARENT_PAGE_ID;
+# the four DB IDs resolve at runtime. Kept here (not imported from
+# setup/notion_init) to avoid a runtime → setup/ import edge at fire time.
+_CANONICAL_DB_TITLES = {
+    "Tracker":   "tracker_db_id",
+    "Profile":   "profile_db_id",
+    "Favorites": "favorites_db_id",
+    "Runs":      "runs_db_id",
+}
+
+# Per-process cache so repeated load_workspace() calls in one fire don't
+# re-discover. Containers are per-fire ephemeral, so no need for cross-fire
+# caching — Notion is fast enough and IDs are stable across fires anyway.
+_discovery_cache: dict[str, dict[str, str]] = {}
+
+
+def _resolve_via_discovery(token: str, parent_page_id: str) -> "WorkspaceConfig":
+    """Look up DB IDs by canonical name from the children of parent_page_id."""
+    from state.notion_client import NotionClient
+
+    cached = _discovery_cache.get(parent_page_id)
+    if cached is None:
+        client = NotionClient(token)
+        children = client.list_child_databases(parent_page_id)
+        cached = {}
+        for title, cfg_key in _CANONICAL_DB_TITLES.items():
+            if title not in children:
+                raise AuthError(
+                    f"DB titled {title!r} not found under parent page "
+                    f"{parent_page_id}. Run /fd-setup first (or set "
+                    f"FD_{cfg_key.upper()} explicitly)."
+                )
+            cached[cfg_key] = children[title]
+        _discovery_cache[parent_page_id] = cached
+
+    return WorkspaceConfig(
+        notion_token=token, parent_page_id=parent_page_id, **cached,
+    )
+
 
 def load_workspace() -> WorkspaceConfig:
     """Load workspace config. Three paths, in priority order:
@@ -55,21 +95,25 @@ def load_workspace() -> WorkspaceConfig:
 
     env_token = os.environ.get("FD_NOTION_TOKEN")
     if env_token:
-        env_keys = {
-            "notion_token":    env_token,
-            "parent_page_id":  os.environ.get("FD_PARENT_PAGE_ID", ""),
+        parent_page_id = os.environ.get("FD_PARENT_PAGE_ID", "")
+        if not parent_page_id:
+            raise AuthError("FD_NOTION_TOKEN is set but FD_PARENT_PAGE_ID is missing")
+
+        # Path A — explicit DB IDs from env (skips Notion discovery call).
+        explicit = {
             "tracker_db_id":   os.environ.get("FD_TRACKER_DB_ID", ""),
             "profile_db_id":   os.environ.get("FD_PROFILE_DB_ID", ""),
             "favorites_db_id": os.environ.get("FD_FAVORITES_DB_ID", ""),
             "runs_db_id":      os.environ.get("FD_RUNS_DB_ID", ""),
         }
-        missing = [k for k, v in env_keys.items() if not v]
-        if missing:
-            raise AuthError(
-                f"FD_NOTION_TOKEN is set but missing env vars: "
-                f"{[f'FD_{k.upper()}' for k in missing]}"
+        if all(explicit.values()):
+            return WorkspaceConfig(
+                notion_token=env_token, parent_page_id=parent_page_id, **explicit,
             )
-        return WorkspaceConfig(**env_keys)
+
+        # Path B — discover by canonical DB name (matches v1.5 UX: user pastes
+        # only token + parent_page_id, runtime resolves the rest).
+        return _resolve_via_discovery(env_token, parent_page_id)
 
     if not SETTINGS_PATH.exists():
         raise AuthError(

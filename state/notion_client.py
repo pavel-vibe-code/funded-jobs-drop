@@ -213,6 +213,31 @@ class NotionClient:
         body = {"properties": properties}
         self._request("PATCH", f"/v1/pages/{page_id}", body)
 
+    def list_child_databases(self, parent_page_id: str) -> dict[str, str]:
+        """Return {db_title: database_id} for every child_database under a page.
+
+        Paginates through page-children blocks; picks out `child_database` blocks.
+        Used at Cloud-Routine startup to discover the 4 funded-drop DB IDs from
+        the parent page when the user has only configured FD_PARENT_PAGE_ID
+        (and not the per-DB FD_*_DB_ID env vars).
+        """
+        out: dict[str, str] = {}
+        start_cursor: Optional[str] = None
+        while True:
+            path = f"/v1/blocks/{parent_page_id}/children?page_size=100"
+            if start_cursor:
+                path += f"&start_cursor={start_cursor}"
+            resp = self._request("GET", path, None)
+            for b in resp.get("results", []):
+                if b.get("type") != "child_database":
+                    continue
+                title = (b.get("child_database") or {}).get("title", "").strip()
+                if title and title not in out:
+                    out[title] = b.get("id", "")
+            if not resp.get("has_more"):
+                return out
+            start_cursor = resp.get("next_cursor")
+
     def get_page(self, page_id: str) -> dict:
         """Get a single page by ID."""
         return self._request("GET", f"/v1/pages/{page_id}", None)
