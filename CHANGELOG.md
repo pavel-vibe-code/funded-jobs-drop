@@ -2,6 +2,25 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.11 — 2026-05-15
+
+Haiku Pass A on post-JD Favorites — catches ambiguous-location cases the deterministic city-map misses.
+
+### Added
+- **Post-JD screener batches.** `jd_fetch_stage` now writes `favorites-postjd-batch-{N}.json` for each surviving Favorite after deterministic post-JD prefilter. Same shape as discovery-time screener batches.
+- **`postjd_screen_apply` orchestrator stage.** Reads `postjd-verdicts-{N}.json` produced by the Haiku Pass A dispatch and deletes the corresponding `scorer-input-{idx}.json` for every `drop` verdict. Stops the Opus scorer from running on Favorites the Haiku judge already rejected.
+- **`/fd-run` Step 3a.** New skill step between JD fetch and Pass B: dispatch screener on post-JD batches, then `postjd_screen_apply`.
+
+### Changed
+- **S1a Favorites policy loosened from strict positive-EU to detected-non-EU.** Same rule as VC sources now (drop only when detected country is unambiguously out-of-region; let "Remote/Anywhere/Global" through). Haiku handles the ambiguous cases via the new Step 3a — much better leverage than dropping unknowns deterministically.
+
+### Cost preview on Pavel's workspace
+- 741 Favorites auto-promoted at discovery
+- 719 dropped by lax deterministic post-JD prefilter (detected non-EU)
+- 22 → 2 post-JD Haiku batches (~$0.01)
+- Haiku likely drops 15–18 (Seoul/Dubai/Toronto/Calgary remotes etc.) → ~4–7 reach Pass B
+- Plus ~20 VC Pass A survivors → **total Pass B: ~25–30 calls = ~$7 Opus**
+
 ## v0.1.10 — 2026-05-15
 
 Scorer can now `Drop` rows entirely instead of always tiering them — the v1.5 "hard exclusion means excluded, not Low" rule.

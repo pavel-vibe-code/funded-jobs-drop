@@ -132,6 +132,13 @@ _EU_REGION = {c.lower() for c in (
 _EU_UK_IE = {c.lower() for c in ("United Kingdom", "UK", "Ireland", "IE")}
 _US_REGION = {c.lower() for c in ("United States", "USA", "US")}
 
+# Region hints — multi-country location markers that don't map to one country
+# but still affirmatively place the job in a variant region. Used so that a
+# job posted as "Remote, Europe" or "Remote, EMEA" survives the variant gate
+# even when no specific country is detectable.
+_EU_REGION_HINTS = {"europe", "eu", "emea", "european union", "eea"}
+_US_REGION_HINTS = {"united states", "north america", "us-based", "us only"}
+
 
 def _allowed_countries_for(profile: Profile) -> Optional[set[str]]:
     """Return the lower-case set of countries allowed by the variant region.
@@ -146,6 +153,23 @@ def _allowed_countries_for(profile: Profile) -> Optional[set[str]]:
     if profile.variant == "US":
         return set(_US_REGION)
     return None
+
+
+def _region_hints_for(variant: str) -> set[str]:
+    """Multi-country hint phrases that affirmatively place a job in-region."""
+    if variant == "EU":
+        return _EU_REGION_HINTS
+    if variant == "US":
+        return _US_REGION_HINTS
+    return set()
+
+
+def _matches_region_hint(job: DiscoveredJob, hints: set[str]) -> bool:
+    """Check raw_location for any region hint phrase ('Europe', 'EMEA', etc.)."""
+    if not hints:
+        return False
+    text = " ".join(list(job.normalized_locations) + list(job.raw_location)).lower()
+    return any(re.search(rf"\b{re.escape(h)}\b", text) for h in hints)
 
 
 def _accepted_modes(profile: Profile) -> set[str]:
@@ -230,15 +254,35 @@ def apply(jobs: list[DiscoveredJob],
     excluded_companies = {c.lower() for c in profile.excluded_companies}
     excluded_industries = {i.lower() for i in profile.excluded_industries}
     allowed_region = _allowed_countries_for(profile)
+    region_hints = _region_hints_for(profile.variant)
 
     survivors: list[DiscoveredJob] = []
     for j in jobs:
-        # S1a: variant region — drop if job's country is determinable and
-        # falls outside the variant region. Unknown country (e.g. "Anywhere",
-        # "Global") falls through; scorer handles it at Pass B.
+        # S1a: variant region.
+        #
+        # Policy differs by source:
+        #   VC sources (Consider/Getro): variant is enforced at fetch time
+        #     via API region params. S1a is defense-in-depth — drops only
+        #     when detected country is unambiguously out-of-region.
+        #     Unknown locations get the benefit of the doubt.
+        #   Favorites: no fetch-time gate (per-company, not per-region).
+        #     Require a POSITIVE in-region signal — detected country in
+        #     variant set OR explicit region hint ("Europe", "EMEA",
+        #     "EU"). Unknown/ambiguous → drop.
         if allowed_region is not None:
             job_country = _extract_country(j)
-            if job_country and job_country.lower() not in allowed_region:
+            in_region = bool(
+                (job_country and job_country.lower() in allowed_region)
+                or _matches_region_hint(j, region_hints)
+            )
+            # Both VC and Favorites get the same lax deterministic check:
+            # drop only when the detected country is unambiguously
+            # out-of-region. Ambiguous cases (no detectable country, or
+            # "Remote/Anywhere") fall through. For Favorites post-JD,
+            # the /fd-run skill follows up with a Haiku Pass A screener
+            # that judges those ambiguous cases using title + location +
+            # JD excerpt — see `postjd_screen_apply` in orchestrator.py.
+            if job_country and not in_region:
                 counts["s1a_variant_region"] += 1
                 continue
 

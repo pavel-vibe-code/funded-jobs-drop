@@ -78,7 +78,39 @@ ls /tmp/fd-run/<RUN_ID>/scorer-input-*.json 2>/dev/null | wc -l
 ```
 
 - Result `0` → no JDs fetched. Skip to **Step 4b (write)** — the failures still get written to Tracker as `jd_fetch_failed`.
-- Result `≥1` → continue to Step 4.
+- Result `≥1` → continue to Step 3a (post-JD screener for Favorites).
+
+## Step 3a — Post-JD screener on Favorites (parallel agent dispatch, Haiku)
+
+Favorites bypassed Pass A at discovery because they had no structured tags. JD fetch enriched them with title/location/work_mode/salary. Now run Pass A on the survivors to catch ambiguous-location cases the deterministic post-JD prefilter missed (e.g. "Remote, Anywhere" at a US-headquartered company).
+
+Count the post-JD batches:
+
+```bash
+ls /tmp/fd-run/<RUN_ID>/favorites-postjd-batch-*.json 2>/dev/null | wc -l
+```
+
+If `0` → skip to Step 4.
+
+For each `favorites-postjd-batch-{N}.json`, dispatch the `screener` agent (same agent as Step 2). WAVE_SIZE=8 parallel per message.
+
+**Prompt template** (substitute `<RUN_ID>` and `<N>` literally):
+
+> Read `/tmp/fd-run/<RUN_ID>/favorites-postjd-batch-<N>.json` and screen every candidate against the profile in that file. These are Favorites that already cleared deterministic post-JD prefilter. Apply your normal Pass A logic — especially focus on whether the role's location is genuinely in the user's variant region (EU/US) and whether the title is relevant to interest_description. "Remote, Anywhere" at a clearly out-of-region company should be `drop`. Write the raw JSON array (no preamble, no markdown fences) to `/tmp/fd-run/<RUN_ID>/postjd-verdicts-<N>.json`. Don't echo anything else.
+
+After all waves return, verify count:
+
+```bash
+ls /tmp/fd-run/<RUN_ID>/postjd-verdicts-*.json 2>/dev/null | wc -l
+```
+
+Re-dispatch missing ones once. Then apply:
+
+```bash
+python3 -m orchestrator postjd_screen_apply <RUN_ID>
+```
+
+This deletes scorer-input files for drop verdicts so the Opus scorer doesn't run on them.
 
 ## Step 4 — Pass B: Scorer (parallel agent dispatch)
 

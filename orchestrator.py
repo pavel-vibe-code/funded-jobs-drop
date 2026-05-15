@@ -411,14 +411,53 @@ def jd_fetch_stage(run_id: str) -> dict:
     (wd / "post-filter-dropped.json").write_text(
         json.dumps(post_filter_dropped, indent=2, default=str)
     )
+
+    # Build post-JD screener batches for Favorites that survived the
+    # deterministic post-JD prefilter. Pass A (Haiku) runs on these to catch
+    # cases the city-map missed (e.g. "Remote, Anywhere" at a US company)
+    # plus title-relevance check. Cost: ~$0.001/candidate.
+    fav_postjd_inputs = []
+    for f in sorted(wd.glob("scorer-input-*.json")):
+        try:
+            d = json.loads(f.read_text())
+        except json.JSONDecodeError:
+            continue
+        cand = d.get("candidate") or {}
+        if cand.get("source_platform") == "Favorites":
+            fav_postjd_inputs.append({
+                "canonical_url":   cand["canonical_url"],
+                "title":           cand.get("title", ""),
+                "company_name":    cand.get("company_name", ""),
+                "raw_location":    cand.get("raw_location", []),
+                "work_mode":       cand.get("work_mode", "on_site"),
+                "seniority":       cand.get("seniority"),
+                "industry_tags":   cand.get("industry_tags", []),
+                "vc_source":       cand.get("vc_source"),
+                "source_platform": "Favorites",
+            })
+
+    num_postjd_batches = 0
+    for i in range(0, len(fav_postjd_inputs), BATCH_SIZE):
+        batch = {
+            "candidates": fav_postjd_inputs[i:i + BATCH_SIZE],
+            "profile":    profile_dict,
+        }
+        (wd / f"favorites-postjd-batch-{num_postjd_batches}.json").write_text(
+            json.dumps(batch, indent=2, default=str)
+        )
+        num_postjd_batches += 1
+
     stats = {
-        "jd_fetched_ok": successes,
-        "jd_fetch_failed": len(failures),
-        "post_filter_dropped": len(post_filter_dropped),
+        "jd_fetched_ok":         successes,
+        "jd_fetch_failed":       len(failures),
+        "post_filter_dropped":   len(post_filter_dropped),
+        "favorites_postjd_batches": num_postjd_batches,
+        "favorites_postjd_total":   len(fav_postjd_inputs),
     }
     (wd / "jd-fetch-stats.json").write_text(json.dumps(stats, indent=2))
     print(f"jd_fetch_stage: {successes} JDs ok, {len(failures)} failed, "
-          f"{len(post_filter_dropped)} dropped by post-JD prefilter (Favorites)")
+          f"{len(post_filter_dropped)} dropped by post-JD prefilter (Favorites); "
+          f"{len(fav_postjd_inputs)} Favorites → {num_postjd_batches} post-JD screener batches")
     return stats
 
 
@@ -1064,14 +1103,76 @@ def rescore_apply(run_id: str, mode: str = "failed") -> dict:
             "still_failed": len(still_failed)}
 
 
+def postjd_screen_apply(run_id: str) -> dict:
+    """Apply post-JD screener verdicts to Favorites scorer-inputs.
+
+    Reads `postjd-verdicts-{N}.json` files written by Haiku Pass A on
+    post-JD Favorites. For each `drop` verdict, deletes the matching
+    `scorer-input-{idx}.json` so the Opus scorer doesn't run on it.
+    Writes `postjd-screen-stats.json` for the JSONL log + Runs metric.
+    """
+    wd = _work_dir(run_id)
+
+    # Build a URL → scorer-input file index. Iterate all scorer-input files
+    # once and look up the canonical URL in each.
+    url_to_input: dict[str, Path] = {}
+    for f in sorted(wd.glob("scorer-input-*.json")):
+        try:
+            d = json.loads(f.read_text())
+        except json.JSONDecodeError:
+            continue
+        cand_url = (d.get("candidate") or {}).get("canonical_url")
+        if cand_url:
+            url_to_input[cand_url] = f
+
+    dropped: list[dict] = []
+    kept = 0
+    drop_verdicts_seen = 0
+
+    for vf in sorted(wd.glob("postjd-verdicts-*.json")):
+        try:
+            verdicts = json.loads(vf.read_text())
+        except json.JSONDecodeError as e:
+            print(f"  warn: {vf.name} malformed: {e}; skipping")
+            continue
+        for v in verdicts:
+            url = v.get("canonical_url")
+            verdict = v.get("verdict", "")
+            if verdict == "drop":
+                drop_verdicts_seen += 1
+                input_path = url_to_input.get(url)
+                if input_path and input_path.exists():
+                    input_path.unlink()
+                    dropped.append({
+                        "canonical_url": url,
+                        "reason":        v.get("reason", "")[:200],
+                    })
+            else:
+                kept += 1
+
+    (wd / "postjd-screen-dropped.json").write_text(
+        json.dumps(dropped, indent=2, default=str)
+    )
+    stats = {
+        "postjd_screened":    drop_verdicts_seen + kept,
+        "postjd_dropped":     len(dropped),
+        "postjd_kept":        kept,
+    }
+    (wd / "postjd-screen-stats.json").write_text(json.dumps(stats, indent=2))
+    print(f"postjd_screen_apply: {drop_verdicts_seen + kept} Favorites screened → "
+          f"{len(dropped)} dropped, {kept} kept (for Pass B scorer)")
+    return stats
+
+
 _STAGES = {
-    "discovery":      discovery_stage,
-    "aggregate":      screener_aggregate,
-    "jd_fetch":       jd_fetch_stage,
-    "write":          write_stage,
-    "finalize":       finalize_stage,
-    "rescore_select": rescore_select,
-    "rescore_apply":  rescore_apply,
+    "discovery":           discovery_stage,
+    "aggregate":           screener_aggregate,
+    "jd_fetch":            jd_fetch_stage,
+    "postjd_screen_apply": postjd_screen_apply,
+    "write":               write_stage,
+    "finalize":            finalize_stage,
+    "rescore_select":      rescore_select,
+    "rescore_apply":       rescore_apply,
 }
 
 
