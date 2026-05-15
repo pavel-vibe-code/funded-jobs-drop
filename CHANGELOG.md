@@ -2,6 +2,17 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.6 — 2026-05-15
+
+Cut Favorites Pass B cost dramatically by re-applying deterministic prefilter after JD fetch enriches them.
+
+### Added
+- **Post-JD prefilter for Favorites.** `jd_fetch_stage` now re-runs the S2–S9 prefilter on every Favorites candidate after enrichment. Discovery couldn't apply it (Favorites arrive with title/location/work_mode/salary blank), but post-JD-fetch those fields are populated — same deterministic checks VC candidates passed at discovery. Drops non-CZ hybrid/onsite Favorites, salary-floor failures, etc. before they hit the Opus scorer. Estimated impact at Pavel's current profile: ~285 Favorites → ~30–50 surviving post-filter, saving roughly $50–60 per fire on Pass B. Dropped rows persist in `post-filter-dropped.json` with the rejecting fields visible.
+- **Salary extraction from Greenhouse + Lever JDs.** Greenhouse's `pay_input_ranges` (yearly cents) and Lever's `salaryRange` (with hour→year conversion when interval=hour) are now parsed into `salary_min_yearly` / `salary_max_yearly` / `salary_currency`, feeding both S9 prefilter and the Salary column in Tracker. Ashby doesn't expose structured salary; skipped there.
+
+### Changed
+- `jd_fetch_stage` printout includes the post-filter-dropped count alongside JDs-ok and JDs-failed.
+
 ## v0.1.5 — 2026-05-15
 
 Hotfix for a bug v0.1.4 introduced: Tracker rows for Favorites still landed with empty Title/Location even after the JD-fetch metadata-merge work shipped.

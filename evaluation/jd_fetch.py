@@ -179,6 +179,18 @@ def _fetch_greenhouse_jd(url: str) -> tuple[str, dict, Optional[str]]:
         meta["title"] = data["title"]
     if data.get("location") and isinstance(data["location"], dict):
         meta["location"] = data["location"].get("name", "")
+    # Greenhouse exposes pay ranges via `pay_input_ranges` — yearly amounts
+    # in cents. Use the widest range across all entries (Greenhouse can list
+    # multiple per role for different markets).
+    ranges = data.get("pay_input_ranges") or []
+    yearly = [r for r in ranges if isinstance(r, dict) and r.get("unit") == "year"]
+    if yearly:
+        meta["salary_min_yearly"] = min((r.get("min_cents", 0) // 100) for r in yearly if r.get("min_cents"))
+        meta["salary_max_yearly"] = max((r.get("max_cents", 0) // 100) for r in yearly if r.get("max_cents"))
+        currencies = {r.get("currency") for r in yearly if r.get("currency")}
+        if len(currencies) == 1:
+            meta["salary_currency"] = currencies.pop()
+        meta["salary_disclosed"] = bool(meta.get("salary_min_yearly"))
     return content, meta, None
 
 
@@ -372,4 +384,14 @@ def _fetch_lever_jd(url: str) -> tuple[str, dict, Optional[str]]:
         meta["location"] = cats["location"]
     if cats.get("commitment"):
         meta["work_mode"] = "remote" if "remote" in cats["commitment"].lower() else "on_site"
+    # Lever's salaryRange is already in major units (USD, not cents) with
+    # interval='year'/'hour'/etc. Convert hour→yearly with the standard 2080
+    # multiplier when needed.
+    sr = data.get("salaryRange") or {}
+    if isinstance(sr, dict) and sr.get("min") and sr.get("max"):
+        mult = 2080 if (sr.get("interval") or "").lower() == "hour" else 1
+        meta["salary_min_yearly"] = int(sr["min"] * mult)
+        meta["salary_max_yearly"] = int(sr["max"] * mult)
+        meta["salary_currency"] = sr.get("currency") or "USD"
+        meta["salary_disclosed"] = True
     return description, meta, None

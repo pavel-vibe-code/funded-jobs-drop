@@ -272,13 +272,41 @@ def screener_aggregate(run_id: str) -> dict:
 # ─── Stage 3: JD fetch ─────────────────────────────────────────────────
 
 def jd_fetch_stage(run_id: str) -> dict:
-    """Fetch JD for each screener survivor. Write per-survivor scorer-input files."""
+    """Fetch JD for each screener survivor. Write per-survivor scorer-input files.
+
+    Favorites post-filter: Favorites bypass Pass A at discovery because their
+    title/location/work_mode/salary are blank then (two-phase ATS adapter).
+    After JD fetch enriches them, re-apply the deterministic prefilter (S2–S9)
+    so non-CZ hybrid/onsite Favorites are dropped before the expensive Pass B,
+    matching the same checks VC candidates went through at discovery.
+    """
+    from discovery.prefilter import apply as apply_prefilter
+    from state.profile import Profile
+
     wd = _work_dir(run_id)
     survivors = _load_json_or(wd / "screener-survivors.json", [])
     profile_dict = _load_json_or(wd / "profile.json", {})
 
+    # Reconstruct a Profile from the persisted dict for the post-filter call.
+    # Only fields prefilter actually reads are populated; everything else
+    # falls back to defaults.
+    profile_for_filter = Profile(
+        variant=profile_dict.get("variant", "EU"),
+        eu_include_uk_ie=profile_dict.get("eu_include_uk_ie", False),
+        home_country=profile_dict.get("home_country", ""),
+        work_modes=profile_dict.get("work_modes", []),
+        search_outside_home=profile_dict.get("search_outside_home", False),
+        willing_to_relocate=profile_dict.get("willing_to_relocate", False),
+        accepted_seniority=profile_dict.get("accepted_seniority", []),
+        salary_floor_amount=profile_dict.get("salary_floor_amount"),
+        salary_floor_currency=profile_dict.get("salary_floor_currency", "USD"),
+        excluded_companies=profile_dict.get("excluded_companies", []),
+        excluded_industries=profile_dict.get("excluded_industries", []),
+    )
+
     successes = 0
     failures: list[dict] = []
+    post_filter_dropped: list[dict] = []
 
     for idx, cand in enumerate(survivors):
         # Reconstruct minimal DiscoveredJob for jd_fetch
@@ -313,8 +341,8 @@ def jd_fetch_stage(run_id: str) -> dict:
 
         jd_text, jd_meta, err = jd_fetch(job)
         if jd_text:
-            # Merge ATS-parsed metadata (title, location, work_mode) into the
-            # candidate dict. Favorites discovery leaves these blank — this is
+            # Merge ATS-parsed metadata into the candidate dict. Favorites
+            # discovery leaves title/location/work_mode/salary blank — this is
             # where they get populated. For VC sources the discovery values
             # win unless the ATS provides something cleaner.
             enriched = {**cand, "jd_text": jd_text}
@@ -324,6 +352,50 @@ def jd_fetch_stage(run_id: str) -> dict:
                 enriched["raw_location"] = [jd_meta["location"]]
             if jd_meta.get("work_mode") and cand.get("work_mode") == "on_site":
                 enriched["work_mode"] = jd_meta["work_mode"]
+            if jd_meta.get("salary_disclosed") and not cand.get("salary_disclosed"):
+                enriched["salary_disclosed"]  = True
+                enriched["salary_min_yearly"] = jd_meta.get("salary_min_yearly")
+                enriched["salary_max_yearly"] = jd_meta.get("salary_max_yearly")
+                enriched["salary_currency"]   = jd_meta.get("salary_currency")
+
+            # Post-filter Favorites against the same S2-S9 the VC candidates
+            # went through at discovery — now that their structured fields
+            # are populated. Drops non-CZ hybrid/onsite Favorites before the
+            # expensive Pass B scorer call.
+            if cand.get("source_platform") == "Favorites":
+                # Build a minimal DiscoveredJob from the enriched dict for
+                # the existing prefilter to chew on. Keep the same posted_at
+                # we already parsed up top.
+                rerun_job = DiscoveredJob(
+                    canonical_url=enriched["canonical_url"],
+                    title=enriched.get("title", ""),
+                    company_name=enriched.get("company_name", ""),
+                    raw_location=enriched.get("raw_location", []),
+                    work_mode=enriched.get("work_mode", "on_site"),
+                    posted_at=posted_at,
+                    source_platform="Favorites",
+                    raw={},
+                    seniority=enriched.get("seniority"),
+                    salary_disclosed=bool(enriched.get("salary_disclosed")),
+                    salary_min_yearly=enriched.get("salary_min_yearly"),
+                    salary_max_yearly=enriched.get("salary_max_yearly"),
+                    salary_currency=enriched.get("salary_currency"),
+                    industry_tags=enriched.get("industry_tags", []),
+                )
+                kept, _counts = apply_prefilter([rerun_job], profile_for_filter)
+                if not kept:
+                    post_filter_dropped.append({
+                        "canonical_url": enriched["canonical_url"],
+                        "title": enriched.get("title", ""),
+                        "company": enriched.get("company_name", ""),
+                        "reason": (
+                            f"post-JD prefilter dropped — "
+                            f"work_mode={enriched.get('work_mode')}, "
+                            f"location={(enriched.get('raw_location') or [''])[0]}"
+                        ),
+                    })
+                    continue  # skip writing scorer-input
+
             scorer_input = {
                 "candidate": enriched,
                 "profile": profile_dict,
@@ -336,9 +408,17 @@ def jd_fetch_stage(run_id: str) -> dict:
             failures.append({**cand, "_jd_fetch_error": err})
 
     (wd / "jd-failed.json").write_text(json.dumps(failures, indent=2, default=str))
-    stats = {"jd_fetched_ok": successes, "jd_fetch_failed": len(failures)}
+    (wd / "post-filter-dropped.json").write_text(
+        json.dumps(post_filter_dropped, indent=2, default=str)
+    )
+    stats = {
+        "jd_fetched_ok": successes,
+        "jd_fetch_failed": len(failures),
+        "post_filter_dropped": len(post_filter_dropped),
+    }
     (wd / "jd-fetch-stats.json").write_text(json.dumps(stats, indent=2))
-    print(f"jd_fetch_stage: {successes} JDs ok, {len(failures)} failed")
+    print(f"jd_fetch_stage: {successes} JDs ok, {len(failures)} failed, "
+          f"{len(post_filter_dropped)} dropped by post-JD prefilter (Favorites)")
     return stats
 
 
