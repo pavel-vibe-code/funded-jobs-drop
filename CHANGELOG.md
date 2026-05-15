@@ -2,6 +2,18 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.10 — 2026-05-15
+
+Scorer can now `Drop` rows entirely instead of always tiering them — the v1.5 "hard exclusion means excluded, not Low" rule.
+
+### Added
+- **`Drop` tier on scorer agent.** Fourth verdict alongside Strong/Decent/Stretch. Use when the JD has an unambiguous hard pursue_blocker (language required, country-locked outside variant, hard coding requirement for non-coder). Agent spec includes Drop-vs-Stretch examples to disambiguate softer signals.
+- **`write_stage` skips Drop rows.** Don't write to Tracker at all — no Match-quality flag, no Auto-excluded note, just absent. Persists to `dropped-by-scorer.json` for the JSONL log and Runs DB metric `dropped_by_scorer`.
+- **`rescore_apply` closes Drop rows.** When a previously-tiered row gets re-scored as Drop, sets `Status=Closed` with `closed_at` populated. Why-fits preserves the scorer's reasoning prefixed `[Dropped by scorer]` so you can audit before the row falls out of default Tracker views.
+
+### Changed
+- `write_stage` printout now reports the Drop count: `"75 written, 0 failed; 0 Pursue, 2 Consider, 230 dropped by scorer (hard blockers)"`.
+
 ## v0.1.9 — 2026-05-15
 
 S1a variant-region gate — closes the gap where remote-from-non-EU jobs leaked through to Pass B despite EU variant.

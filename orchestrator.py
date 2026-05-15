@@ -428,6 +428,10 @@ _TIER_NORMALIZE = {
     "Strong":  "Strong — Pursue",
     "Decent":  "Decent — Consider",
     "Stretch": "Stretch — Skim",
+    # "Drop" is a sentinel: orchestrator's write_stage skips Tracker write
+    # entirely; rescore_apply closes the existing row. Never written to
+    # the Match column (which only has 3 values).
+    "Drop":    "Drop",
     # Already-normalized values pass through
     "Strong — Pursue":   "Strong — Pursue",
     "Decent — Consider": "Decent — Consider",
@@ -453,6 +457,7 @@ def write_stage(run_id: str) -> dict:
     verdicts: list[dict] = []
     pursue_samples: list[dict] = []
     consider_samples: list[dict] = []
+    dropped_by_scorer: list[dict] = []
 
     # Map scorer outputs back to survivors via input file index
     for f in sorted(wd.glob("scorer-output-*.json")):
@@ -481,6 +486,18 @@ def write_stage(run_id: str) -> dict:
 
         tier_raw = scored.get("tier", "Stretch")
         tier_norm = _TIER_NORMALIZE.get(tier_raw, "Decent — Consider")  # safe default
+
+        # Drop tier: don't write to Tracker at all. v1.5 lesson: hard
+        # exclusion means excluded, not Low.
+        if tier_norm == "Drop":
+            dropped_by_scorer.append({
+                "canonical_url": cand_url,
+                "title":         cand.get("title", ""),
+                "company":       cand.get("company_name", ""),
+                "reason":        scored.get("reasoning", "")[:200],
+                "blockers":      "; ".join(scored.get("pursue_blockers_detected", []) or []),
+            })
+            continue
 
         verdict = _build_verdict(cand, cand_url, tier_norm, scored,
                                  now_iso, profile_hash, run_id, status="New")
@@ -524,6 +541,7 @@ def write_stage(run_id: str) -> dict:
             "pursue_count":          len(pursue_samples),
             "consider_count":        len(consider_samples),
             "skim_count":            sum(1 for v in verdicts if v["match"] == "Stretch — Skim"),
+            "dropped_by_scorer":     len(dropped_by_scorer),
             "closed_count":          dmetrics.get("closed_count", 0),
             "cost_usd":              0.0,
             "duration_s":            0,
@@ -547,10 +565,14 @@ def write_stage(run_id: str) -> dict:
     }
     (wd / "summarize-input.json").write_text(json.dumps(sum_input, indent=2, default=str))
     (wd / "all-verdicts.json").write_text(json.dumps(verdicts, indent=2, default=str))
+    (wd / "dropped-by-scorer.json").write_text(
+        json.dumps(dropped_by_scorer, indent=2, default=str)
+    )
 
     write_result["pursue_count"] = len(pursue_samples)
     print(f"write_stage: {write_result['written']} written, {write_result['failed']} failed; "
-          f"{len(pursue_samples)} Pursue, {len(consider_samples)} Consider")
+          f"{len(pursue_samples)} Pursue, {len(consider_samples)} Consider, "
+          f"{len(dropped_by_scorer)} dropped by scorer (hard blockers)")
     return write_result
 
 
@@ -924,6 +946,34 @@ def rescore_apply(run_id: str, mode: str = "failed") -> dict:
             continue
 
         tier_norm = _TIER_NORMALIZE.get(scored.get("tier", "Stretch"), "Decent — Consider")
+
+        # Drop tier on rescore: scorer determined this row has a hard
+        # pursue_blocker — close it instead of updating. Existing row gets
+        # Status=Closed with the scorer's reasoning preserved in why_fits.
+        if tier_norm == "Drop":
+            try:
+                from state.tracker import update_status as _update_status
+                now_iso = datetime.now(timezone.utc).isoformat()
+                _update_status(row["page_id"], "Closed", closed_at_iso=now_iso)
+                # Also write why it was dropped to Why fits / blockers so the
+                # user can audit before the row drops out of default views.
+                update_evaluated(row["page_id"], {
+                    "match":                       row.get("match_prior", "Stretch — Skim"),
+                    "why_fits":                    f"[Dropped by scorer] {scored.get('reasoning', '')}",
+                    "status":                      "Closed",
+                    "pass_b_residency_ok":         bool(scored.get("residency_ok")),
+                    "pass_b_attempts":             row.get("pass_b_attempts", 0) + 1,
+                    "profile_hash_at_eval":        profile_hash,
+                    "last_run_id":                 run_id,
+                    "pursue_blockers_detected":    "; ".join(scored.get("pursue_blockers_detected", []) or []),
+                    "stretch_indicators_detected": "; ".join(scored.get("stretch_indicators_detected", []) or []),
+                    "existing_match_quality":      row.get("match_quality", "OK"),
+                    "existing_feedback":           row.get("feedback", ""),
+                })
+            except Exception as e:
+                print(f"  warn: drop-close failed for {row.get('canonical_url')}: {e}")
+            continue
+
         verdict = {
             "page_id":                     row["page_id"],
             "canonical_url":               row["canonical_url"],

@@ -70,7 +70,20 @@ The deterministic prefilter already enforced hard rules (work mode, country/relo
 
 - **Strong** — zero pursue_blockers detected AND clear match to `interest_description`
 - **Decent** — zero pursue_blockers detected, but at least one stretch_indicator OR partial match to `interest_description`
-- **Stretch** — at least one pursue_blocker detected, OR multiple stretch_indicators
+- **Stretch** — multiple stretch_indicators OR borderline pursue_blocker that's ambiguous (e.g. "may require some Italian" is borderline; "fluent Italian required" is clear)
+- **Drop** — clear hard pursue_blocker that fundamentally disqualifies the job (language required other than English, country-locked outside variant region, hard coding requirement when user is non-coder, etc.). Drop rows are NOT written to Tracker — they don't surface to the user at all. Use Drop only when the blocker is unambiguous.
+
+### Drop vs Stretch — when to choose which
+
+A pursue_blocker triggers **Drop** when the JD makes it clear the user *cannot* take the job (or any reasonable application would be rejected on first pass). A pursue_blocker triggers **Stretch** when the JD has language that suggests a blocker but it's softened, optional, or ambiguous.
+
+Examples:
+- "Fluent in German required" → Drop (hard language requirement)
+- "German nice to have" → Stretch (soft signal)
+- "Must be based in San Francisco" → Drop (country/region lock)
+- "Open to Bay Area or remote in PT timezone" → Stretch (partially accommodating)
+- "Strong Python/Spark required, 5+ years production" → Drop (hard coding requirement for non-coder profile)
+- "Familiarity with Python a plus" → Stretch (soft preference)
 
 ### Residency check
 
@@ -98,8 +111,8 @@ The orchestrator's prompt will specify an output path (typically `/tmp/fd-run/<r
 
 ```json
 {
-  "tier": "Strong" | "Decent" | "Stretch",
-  "reasoning": "3-5 sentences. Cite specific JD evidence and which user-defined flags (if any) triggered. State alignment / mismatch with interest_description in concrete terms.",
+  "tier": "Strong" | "Decent" | "Stretch" | "Drop",
+  "reasoning": "3-5 sentences. Cite specific JD evidence and which user-defined flags (if any) triggered. State alignment / mismatch with interest_description in concrete terms. For Drop, name the hard blocker explicitly.",
   "pursue_blockers_detected": ["literal user phrases that matched"],
   "stretch_indicators_detected": ["literal user phrases that matched"],
   "residency_ok": true | false | null,
