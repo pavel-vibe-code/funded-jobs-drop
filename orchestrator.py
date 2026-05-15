@@ -356,10 +356,14 @@ _TIER_NORMALIZE = {
 
 
 def write_stage(run_id: str) -> dict:
-    """Read scorer outputs + jd-failed, write Tracker rows, build summarize-input."""
+    """Read scorer outputs + jd-failed, write Tracker rows, build summarize-input.
+
+    Candidate source-of-truth: each scorer-input-<idx>.json carries the
+    candidate dict that jd_fetch_stage built — including the ATS-derived
+    title/location merged in. Reading from screener-survivors.json instead
+    would lose those fields and write empty-titled rows to Notion.
+    """
     wd = _work_dir(run_id)
-    survivors = _load_json_or(wd / "screener-survivors.json", [])
-    sur_by_url = {s["canonical_url"]: s for s in survivors}
     failures = _load_json_or(wd / "jd-failed.json", [])
     dmetrics = _load_json_or(wd / "discovery-metrics.json", {})
 
@@ -388,8 +392,12 @@ def write_stage(run_id: str) -> dict:
         input_path = wd / f"scorer-input-{idx}.json"
         if not input_path.exists():
             continue
-        cand_url = json.loads(input_path.read_text())["candidate"]["canonical_url"]
-        cand = sur_by_url.get(cand_url, {})
+        # Use the scorer-input's candidate as the source of truth — it carries
+        # JD-fetch metadata (title, location, work_mode) that jd_fetch_stage
+        # merged in. The screener-survivors version is pre-merge and would
+        # leave Favorites rows with empty Title/Location in Tracker.
+        cand = json.loads(input_path.read_text())["candidate"]
+        cand_url = cand["canonical_url"]
 
         tier_raw = scored.get("tier", "Stretch")
         tier_norm = _TIER_NORMALIZE.get(tier_raw, "Decent — Consider")  # safe default

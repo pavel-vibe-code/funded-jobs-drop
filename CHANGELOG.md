@@ -2,6 +2,13 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.5 — 2026-05-15
+
+Hotfix for a bug v0.1.4 introduced: Tracker rows for Favorites still landed with empty Title/Location even after the JD-fetch metadata-merge work shipped.
+
+### Fixed
+- **write_stage was reading from the wrong file.** v0.1.4 merged JD-derived title/location into the candidate dict inside `jd_fetch_stage`, which wrote the enriched candidate to `scorer-input-<idx>.json`. But `write_stage` continued reading candidate fields from `screener-survivors.json` (the pre-merge snapshot from discovery), so the merged metadata was discarded right before Notion write. Fix: write_stage now uses each `scorer-input-<idx>.json`'s candidate as the source of truth. Same-named row layout, but Title + Location now populate correctly for Favorites. Verified locally with smoke; next routine fire should write 13 Favorites rows with real titles instead of blank ones.
+
 ## v0.1.4 — 2026-05-15
 
 Two bugs from production fire #2 (Favorites Pass A + missing structured fields) plus AI-50 seed reconciliation against drift.
