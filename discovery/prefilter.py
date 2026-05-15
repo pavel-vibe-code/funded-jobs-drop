@@ -118,6 +118,35 @@ _CITY_TO_COUNTRY = {
     "são paulo":      "Brazil",         "sao paulo":     "Brazil",
 }
 
+# Variant region sets — S1a hard-drops jobs in countries outside the user's
+# variant region. EU continental + EEA/EFTA; UK + Ireland are conditional on
+# Profile.eu_include_uk_ie. US is US-only (no Canada/Mexico — keeps semantics
+# clean; users wanting cross-border can override per-favorite).
+_EU_REGION = {c.lower() for c in (
+    "Germany", "France", "Spain", "Netherlands", "Italy", "Poland", "Portugal",
+    "Sweden", "Denmark", "Finland", "Norway", "Austria", "Switzerland",
+    "Belgium", "Czechia", "Czech Republic", "Lithuania", "Estonia", "Latvia",
+    "Romania", "Bulgaria", "Hungary", "Slovakia", "Slovenia", "Croatia",
+    "Greece", "Iceland", "Luxembourg", "Malta", "Cyprus",
+)}
+_EU_UK_IE = {c.lower() for c in ("United Kingdom", "UK", "Ireland", "IE")}
+_US_REGION = {c.lower() for c in ("United States", "USA", "US")}
+
+
+def _allowed_countries_for(profile: Profile) -> Optional[set[str]]:
+    """Return the lower-case set of countries allowed by the variant region.
+
+    None means no S1a filter applies (unknown variant — let everything through).
+    """
+    if profile.variant == "EU":
+        allowed = set(_EU_REGION)
+        if profile.eu_include_uk_ie:
+            allowed |= _EU_UK_IE
+        return allowed
+    if profile.variant == "US":
+        return set(_US_REGION)
+    return None
+
 
 def _accepted_modes(profile: Profile) -> set[str]:
     """Convert profile.work_modes labels to canonical {remote, hybrid, on_site}."""
@@ -177,9 +206,17 @@ def _to_usd(amount: float, currency: Optional[str]) -> Optional[float]:
 
 def apply(jobs: list[DiscoveredJob],
           profile: Profile) -> tuple[list[DiscoveredJob], dict[str, int]]:
-    """Run S2 → S9 sequentially. Returns (survivors, per-stage drop counts)."""
+    """Run S1a + S2-S9 sequentially. Returns (survivors, per-stage drop counts).
+
+    S1a (variant region) hard-drops jobs in countries outside the user's
+    variant region — EU continental (+ UK/IE if opted in) for EU variant,
+    US-only for US variant. This is stricter than S3, which only enforces
+    home-country/relocation logic. S1a runs first so we don't waste cycles
+    on jobs that can't qualify regardless of work-mode/relocation.
+    """
     counts: dict[str, int] = {
         "input": len(jobs),
+        "s1a_variant_region": 0,
         "s2_work_mode": 0,
         "s3_country_relocation": 0,
         "s4_seniority": 0,
@@ -192,9 +229,19 @@ def apply(jobs: list[DiscoveredJob],
     accepted_modes = _accepted_modes(profile)
     excluded_companies = {c.lower() for c in profile.excluded_companies}
     excluded_industries = {i.lower() for i in profile.excluded_industries}
+    allowed_region = _allowed_countries_for(profile)
 
     survivors: list[DiscoveredJob] = []
     for j in jobs:
+        # S1a: variant region — drop if job's country is determinable and
+        # falls outside the variant region. Unknown country (e.g. "Anywhere",
+        # "Global") falls through; scorer handles it at Pass B.
+        if allowed_region is not None:
+            job_country = _extract_country(j)
+            if job_country and job_country.lower() not in allowed_region:
+                counts["s1a_variant_region"] += 1
+                continue
+
         # S2: work mode acceptance
         if accepted_modes and j.work_mode not in accepted_modes:
             counts["s2_work_mode"] += 1
@@ -212,7 +259,8 @@ def apply(jobs: list[DiscoveredJob],
                     # Not relocating + not remote → can't take this job
                     counts["s3_country_relocation"] += 1
                     continue
-                # Remote in another country: keep, residency verified at Pass B
+                # Remote in another country (still within variant region):
+                # keep, residency verified at Pass B
             # job_country == home OR job_country unknown: continue to next stage
 
         # S4: seniority

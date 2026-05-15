@@ -2,6 +2,22 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.9 — 2026-05-15
+
+S1a variant-region gate — closes the gap where remote-from-non-EU jobs leaked through to Pass B despite EU variant.
+
+### Added
+- **S1a prefilter stage (variant region).** Runs before S2. Hard-drops jobs whose detected country falls outside the variant's region set:
+  - **EU variant**: 28 EU continental + EEA/EFTA countries. UK + Ireland conditional on `Profile.eu_include_uk_ie`.
+  - **US variant**: United States only. No Canada/Mexico — keeps semantics tight; cross-border users can pin specific Favorites if they want.
+  - Unknown country (e.g. "Anywhere", "Global", "North America") falls through; Pass B scorer handles it via residency check.
+- Replaces the leaky behavior in S3 where `work_mode=remote` + `search_outside_home=True` kept jobs from ANY country. S3 still handles the home-country/relocation/work-mode logic, but only after S1a confirms the country is in scope.
+
+### Effect on Pavel's workspace (dry-run, 3158 raw jobs)
+- v0.1.8 (city-map + word boundary): 656 of 678 Favorites dropped post-JD = 22 survivors to Pass B
+- v0.1.9 (+ S1a): **719 of 741 Favorites dropped** post-JD = 22 survivors (same Pass B count but now all are determinably-EU OR location-unknown, not remote-from-Seoul/Dubai/Toronto)
+- Pass B candidates estimate: ~42 (≈$10–12 Opus)
+
 ## v0.1.8 — 2026-05-15
 
 The v0.1.6 post-JD prefilter was right in shape but mostly inert because `_extract_country` couldn't read the location strings ATSes actually emit. Dry-run on Pavel's workspace showed post-filter dropping 63 of 742 Favorites (8.5%); after this fix, 656 of 678 drop (97%). Cost projection for next routine fire: **~$10–12 Pass B vs ~$70 in fire #3** (6x reduction).
