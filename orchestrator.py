@@ -164,10 +164,21 @@ def discovery_stage(run_id: str) -> dict:
     candidate_dicts = [_job_to_dict(j) for j in candidates]
     (wd / "candidates.json").write_text(json.dumps(candidate_dicts, indent=2, default=str))
 
-    # Batch for parallel screener dispatch
+    # Favorites discovery is two-phase (returns IDs only; title/location fill
+    # at JD fetch time). They have no structured tags for Pass A to read, so
+    # we bypass the screener entirely — they auto-promote straight to JD
+    # fetch + Pass B. Saves Pass A LLM cost and avoids the screener marking
+    # every empty-title candidate `maybe`.
+    vc_candidates = [c for c in candidate_dicts if c.get("source_platform") != "Favorites"]
+    fav_candidates = [c for c in candidate_dicts if c.get("source_platform") == "Favorites"]
+    (wd / "auto-promote-favorites.json").write_text(
+        json.dumps(fav_candidates, indent=2, default=str)
+    )
+
+    # Batch VC candidates for parallel screener dispatch
     num_batches = 0
-    for i in range(0, len(candidate_dicts), BATCH_SIZE):
-        batch = candidate_dicts[i:i + BATCH_SIZE]
+    for i in range(0, len(vc_candidates), BATCH_SIZE):
+        batch = vc_candidates[i:i + BATCH_SIZE]
         batch_data = {"candidates": batch, "profile": profile_dict}
         (wd / f"candidates-batch-{num_batches}.json").write_text(
             json.dumps(batch_data, indent=2, default=str)
@@ -185,6 +196,7 @@ def discovery_stage(run_id: str) -> dict:
         "profile_hash": profile.profile_hash,
         "tracker_known_urls": len(tracker_urls),
         "num_batches": num_batches,
+        "auto_promoted_favorites": len(fav_candidates),
         "closed_count": closure_result["closed"],
         "closure_failed_count": closure_result["failed"],
         "healthy_sources": sorted(healthy_sources),
@@ -193,14 +205,21 @@ def discovery_stage(run_id: str) -> dict:
     (wd / "discovery-metrics.json").write_text(json.dumps(metrics, indent=2, default=str))
 
     print(f"discovery_stage: {dmetrics['discovery_total']} raw → "
-          f"{dmetrics['after_prefilter']} survivors → {num_batches} screener batches")
+          f"{dmetrics['after_prefilter']} survivors → "
+          f"{num_batches} screener batches + {len(fav_candidates)} auto-promoted favorites")
     return metrics
 
 
 # ─── Stage 2: Screener aggregate ───────────────────────────────────────
 
 def screener_aggregate(run_id: str) -> dict:
-    """Read screener-verdicts-{N}.json files, aggregate to survivors + drops."""
+    """Read screener-verdicts-{N}.json files, aggregate to survivors + drops.
+
+    Auto-promoted Favorites (from `auto-promote-favorites.json`) merge into
+    survivors here without consuming Pass A tokens. They skip the screener
+    because their structured tags (title, location, seniority) are blank
+    until JD fetch fills them in.
+    """
     wd = _work_dir(run_id)
     candidates = _load_json_or(wd / "candidates.json", [])
     cand_by_url = {c["canonical_url"]: c for c in candidates}
@@ -225,17 +244,28 @@ def screener_aggregate(run_id: str) -> dict:
             else:
                 drops.append(cand)
 
+    # Auto-promote Favorites: skip Pass A entirely.
+    auto_promoted = _load_json_or(wd / "auto-promote-favorites.json", [])
+    for cand in auto_promoted:
+        survivors.append({
+            **cand,
+            "_pass_a_verdict": "auto",
+            "_pass_a_reason": "Favorites — skipped Pass A (no structured tags at discovery)",
+        })
+
     (wd / "screener-survivors.json").write_text(json.dumps(survivors, indent=2, default=str))
     (wd / "screener-drops.json").write_text(json.dumps(drops, indent=2, default=str))
 
     stats = {
-        "pass_a_evaluated": len(survivors) + len(drops),
-        "pass_a_kept": len(survivors),
+        "pass_a_evaluated": len(survivors) - len(auto_promoted) + len(drops),
+        "pass_a_kept": len(survivors) - len(auto_promoted),
         "pass_a_dropped": len(drops),
+        "auto_promoted_favorites": len(auto_promoted),
     }
     (wd / "screener-stats.json").write_text(json.dumps(stats, indent=2))
-    print(f"screener_aggregate: {stats['pass_a_evaluated']} evaluated → "
-          f"{stats['pass_a_kept']} survivors, {stats['pass_a_dropped']} dropped")
+    print(f"screener_aggregate: {stats['pass_a_evaluated']} screened → "
+          f"{stats['pass_a_kept']} survivors, {stats['pass_a_dropped']} dropped"
+          f" (+{stats['auto_promoted_favorites']} auto-promoted favorites)")
     return stats
 
 
@@ -281,10 +311,21 @@ def jd_fetch_stage(run_id: str) -> dict:
             vc_source=cand.get("vc_source"),
         )
 
-        jd_text, err = jd_fetch(job)
+        jd_text, jd_meta, err = jd_fetch(job)
         if jd_text:
+            # Merge ATS-parsed metadata (title, location, work_mode) into the
+            # candidate dict. Favorites discovery leaves these blank — this is
+            # where they get populated. For VC sources the discovery values
+            # win unless the ATS provides something cleaner.
+            enriched = {**cand, "jd_text": jd_text}
+            if jd_meta.get("title") and not cand.get("title"):
+                enriched["title"] = jd_meta["title"]
+            if jd_meta.get("location") and not (cand.get("raw_location") or [None])[0]:
+                enriched["raw_location"] = [jd_meta["location"]]
+            if jd_meta.get("work_mode") and cand.get("work_mode") == "on_site":
+                enriched["work_mode"] = jd_meta["work_mode"]
             scorer_input = {
-                "candidate": {**cand, "jd_text": jd_text},
+                "candidate": enriched,
                 "profile": profile_dict,
             }
             (wd / f"scorer-input-{idx}.json").write_text(
@@ -638,7 +679,7 @@ def rescore_select(run_id: str, mode: str = "failed") -> dict:
     still_failed: list[dict] = []
     for idx, row in enumerate(rows):
         url = row["canonical_url"]
-        jd_text, err = fetch_jd_for_url(url)
+        jd_text, _jd_meta, err = fetch_jd_for_url(url)
         if jd_text:
             candidate = {
                 "canonical_url":     url,

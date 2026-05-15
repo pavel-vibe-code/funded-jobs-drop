@@ -2,6 +2,17 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.4 — 2026-05-15
+
+Two bugs from production fire #2: Favorites flowed through Pass A with empty titles (wasting ~$120 of Opus on 473 unscoreable candidates); title + location stayed blank in Tracker because JD-fetch threw away the structured fields it received from the ATS API.
+
+### Fixed
+- **Favorites bypass Pass A.** Favorites discovery is two-phase by design (returns IDs at discovery; title/location fill at JD fetch). With empty title + location, the screener marked everything `maybe` and dumped 473 unscoreable candidates onto Pass B. Now Favorites auto-promote from discovery directly to JD fetch + Pass B, skipping Pass A entirely. Saves screener tokens; eliminates the "all 416 land in Skim" failure mode. (`orchestrator.discovery_stage` writes `auto-promote-favorites.json`; `screener_aggregate` merges it into survivors with `_pass_a_verdict: auto`.)
+- **Title + Location stay populated in Tracker.** `evaluation/jd_fetch.py:fetch()` and `fetch_jd_for_url()` now return `(jd_text, metadata, error)` 3-tuples. Each per-ATS fetcher (Greenhouse/Ashby/Lever) parses the rich response (title, location, work_mode, sometimes salary) alongside the description. The page-scrape fallback extracts the `<title>` tag. `jd_fetch_stage` merges metadata into the candidate dict before writing scorer-input, so write_stage's `cand.get("title")` returns the real ATS title instead of the discovery-time placeholder.
+
+### Changed
+- Discovery metrics now include `auto_promoted_favorites`. Screener stats include `auto_promoted_favorites` and the printout differentiates "screened" vs "auto-promoted."
+
 ## v0.1.3 — 2026-05-15
 
 First production routine fire surfaced two bugs that local e2e didn't catch.
