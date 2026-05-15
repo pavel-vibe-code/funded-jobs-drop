@@ -2,6 +2,28 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.13 — 2026-05-15
+
+Diagnostic patch for Ashby 503s observed from Cloud Routine container (Pavel's 5th production fire). Local probe from residential IP returns 200 OK on all boards; same calls from routine return HTTP 503 — strongly suggests Cloudflare WAF blocking the routine container's datacenter egress.
+
+### Added
+- **`http_get()` captures diagnostic context on HTTP errors.** Error string now includes the HTTP code, `cf-ray` header (Cloudflare edge identifier), `server` header, and a ≤120-char body snippet. This flows through to `jd_fetch_failed` rows and the Runs DB `jsonl_log`, so we can post-mortem an Ashby block from Notion alone next fire.
+
+  Sample upgraded error string:
+  ```
+  http_403 | cf-ray=9fc4d1d46e7087a4-PRG | server=cloudflare | body='<!DOCTYPE html>...Ray ID...'
+  ```
+
+  vs. the v0.1.12 form:
+  ```
+  http_403
+  ```
+
+  Local probe of `api.ashbyhq.com` confirms `server=cloudflare` — the API is Cloudflare-fronted. Next routine fire will reveal whether the 503s are Cloudflare WAF (Error 1015 rate-limit, 1020 access-denied) or Ashby's own origin under stress, by examining the body snippet.
+
+### Next steps
+- If diagnostic confirms Cloudflare WAF block, v0.1.14 will switch Ashby fetch from API (`api.ashbyhq.com/posting-api/...`) to public board scrape (`jobs.ashbyhq.com/<slug>`). The Next.js page has the same `__NEXT_DATA__` content and is treated less aggressively by Cloudflare WAF.
+
 ## v0.1.12 — 2026-05-15
 
 Pass A screener tightened — pursue_blockers + stretch_indicators now both drive hard drops at Pass A. Plus a resilience patch in `postjd_screen_apply` for when agents drop fields from their JSON output.

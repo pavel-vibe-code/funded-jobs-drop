@@ -43,12 +43,39 @@ TIMEOUT_S  = 20
 
 
 def http_get(url: str, accept: str = "application/json") -> Tuple[Optional[bytes], Optional[str]]:
+    """Fetch a URL. Returns (body_bytes, error_string).
+
+    On error, the error string carries diagnostic context:
+      - HTTP code (e.g. http_503)
+      - cf-ray header if present (Cloudflare edge identifier)
+      - server header (often discloses the WAF / origin server type)
+      - Up-to-120-char response body snippet (lets us spot Cloudflare bot
+        pages vs origin errors at a glance)
+
+    This is what tells us whether an Ashby 503 is Ashby's own backend or a
+    Cloudflare WAF block of the routine container's egress IP — invisible
+    until we capture the body + headers.
+    """
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": accept})
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
             return resp.read(), None
     except urllib.error.HTTPError as e:
-        return None, f"http_{e.code}"
+        try:
+            body_snippet = e.read().decode("utf-8", "replace")[:200]
+        except Exception:
+            body_snippet = ""
+        bits = [f"http_{e.code}"]
+        cf_ray = e.headers.get("cf-ray") or e.headers.get("CF-RAY") or ""
+        if cf_ray:
+            bits.append(f"cf-ray={cf_ray}")
+        server = e.headers.get("server") or ""
+        if server:
+            bits.append(f"server={server}")
+        if body_snippet:
+            clean = " ".join(body_snippet.split())[:120]
+            bits.append(f"body={clean!r}")
+        return None, " | ".join(bits)
     except urllib.error.URLError as e:
         return None, f"urlerror:{getattr(e, 'reason', e)}"
     except Exception as e:
