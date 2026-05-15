@@ -17,9 +17,17 @@ Start with this (substitute the actual version from `VERSION` file):
 >
 > Setup takes ~5 minutes. You can edit any answer later via `/fd-settings`.
 
-## Repair mode
+## Modes
 
-If invoked as `/fd-setup --repair`: skip the wizard, run `setup.runner.execute_repair()` directly, report which DBs got patched. Done.
+| Invocation | Action |
+|---|---|
+| `/fd-setup` | Full wizard + creates 4 DBs + writes Profile. **Refuses** if a workspace is already configured — directs user to `--repair` / `--rewipe` / `/fd-settings`. |
+| `/fd-setup --repair` | Skip wizard. Run `execute_repair()`: validate existing DBs, patch missing schema columns. Preserves all data. |
+| `/fd-setup --rewipe` | Run the full wizard again, but only after the existing "Funded Drop" parent page has been archived in Notion (Move to Trash). Refuses otherwise so duplicate DBs can't be created. |
+
+If the user types `/fd-setup --repair`: run `setup.runner.execute_repair()` directly, report which DBs got patched. Done.
+
+If the user types `/fd-setup --rewipe`: confirm with them once that they've archived the existing parent page in Notion (or are about to), then walk the wizard, then call `execute_fresh(answers, rewipe=True)`. The runner re-checks Notion that the page is actually archived — if not, it'll refuse with instructions.
 
 ## Fresh setup flow
 
@@ -98,7 +106,7 @@ answers = WizardAnswers(
     variant='...',
     # ... all fields
 )
-result = execute_fresh(answers)
+result = execute_fresh(answers, rewipe=<True if --rewipe was passed else False>)
 print('Created DBs:', result.db_ids)
 print('Profile page:', result.profile_page_id)
 if result.ai50_seed_result:
