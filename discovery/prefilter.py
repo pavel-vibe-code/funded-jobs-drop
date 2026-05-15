@@ -15,6 +15,7 @@ Stage mapping:
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from discovery.sources.base import DiscoveredJob
@@ -30,7 +31,7 @@ FX_TO_USD = {
 }
 
 # Country recognition list for S3. Longer / multi-word names first so that
-# substring matching prefers the more specific match.
+# matching prefers the more specific match (United Kingdom before UK, etc.).
 _KNOWN_COUNTRIES = [
     "United Kingdom", "United States", "South Korea", "Saudi Arabia",
     "United Arab Emirates", "Hong Kong",
@@ -39,16 +40,82 @@ _KNOWN_COUNTRIES = [
     "Belgium", "Czechia", "Czech Republic", "Lithuania", "Estonia", "Latvia",
     "Romania", "Bulgaria", "Hungary", "Slovakia", "Slovenia", "Croatia",
     "Greece", "Ireland", "Iceland", "Luxembourg", "Malta", "Cyprus",
-    "Canada", "Mexico", "USA", "UK",
+    "Canada", "Mexico", "USA", "UK", "US",
     "India", "China", "Japan", "Singapore", "Australia",
     "Brazil", "Argentina", "Chile", "Colombia",
-    "Israel",
+    "Israel", "IL", "IE",
 ]
 
 _COUNTRY_ALIASES = {
     "usa": "united states",      "united states": "usa",
-    "uk": "united kingdom",      "united kingdom": "uk",
+    "us":  "united states",
+    "uk":  "united kingdom",     "united kingdom": "uk",
+    "ie":  "ireland",
+    "il":  "israel",
     "czechia": "czech republic", "czech republic": "czechia",
+}
+
+# City → country, for location strings like "San Francisco" or "Berlin" that
+# have no country code attached. ATS adapters (esp. Ashby) commonly emit
+# city-only values; without this map S3 falls through and non-EU on-site
+# jobs slip into Pass B at meaningful cost. Cover the top US + EU tech hubs;
+# expand as data demands.
+_CITY_TO_COUNTRY = {
+    # US tech hubs
+    "san francisco":  "United States", "sf":             "United States",
+    "bay area":       "United States", "palo alto":      "United States",
+    "menlo park":     "United States", "mountain view":  "United States",
+    "sunnyvale":      "United States", "redwood city":   "United States",
+    "new york":       "United States", "new york city":  "United States",
+    "nyc":            "United States", "brooklyn":       "United States",
+    "manhattan":      "United States", "los angeles":    "United States",
+    "la":             "United States", "seattle":        "United States",
+    "bellevue":       "United States", "redmond":        "United States",
+    "boston":         "United States", "cambridge ma":   "United States",
+    "austin":         "United States", "dallas":         "United States",
+    "houston":        "United States", "plano":          "United States",
+    "chicago":        "United States", "denver":         "United States",
+    "boulder":        "United States", "arvada":         "United States",
+    "miami":          "United States", "washington dc":  "United States",
+    "atlanta":        "United States", "san diego":      "United States",
+    "portland":       "United States", "phoenix":        "United States",
+    "tulsa":          "United States", "abilene":        "United States",
+    "amarillo":       "United States", "warrenton":      "United States",
+    "childress":      "United States", "brighton":       "United States",
+    "springfield":    "United States", "salt lake city": "United States",
+    # UK
+    "london":         "United Kingdom", "manchester":    "United Kingdom",
+    "edinburgh":      "United Kingdom", "oxford":        "United Kingdom",
+    "cambridge uk":   "United Kingdom",
+    # Ireland
+    "dublin":         "Ireland",        "cork":          "Ireland",
+    # EU continental
+    "berlin":         "Germany",        "munich":        "Germany",
+    "hamburg":        "Germany",        "frankfurt":     "Germany",
+    "cologne":        "Germany",        "dresden":       "Germany",
+    "paris":          "France",         "lyon":          "France",
+    "marseille":      "France",         "toulouse":      "France",
+    "amsterdam":      "Netherlands",    "rotterdam":     "Netherlands",
+    "the hague":      "Netherlands",    "utrecht":       "Netherlands",
+    "barcelona":      "Spain",          "madrid":        "Spain",
+    "milan":          "Italy",          "rome":          "Italy",
+    "stockholm":      "Sweden",         "copenhagen":    "Denmark",
+    "helsinki":       "Finland",        "oslo":          "Norway",
+    "warsaw":         "Poland",         "krakow":        "Poland",
+    "lisbon":         "Portugal",       "brussels":      "Belgium",
+    "zurich":         "Switzerland",    "geneva":        "Switzerland",
+    "vienna":         "Austria",        "athens":        "Greece",
+    "budapest":       "Hungary",        "bucharest":     "Romania",
+    "prague":         "Czechia",        "brno":          "Czechia",
+    # Outside EU/US tech hubs
+    "tel aviv":       "Israel",         "tokyo":         "Japan",
+    "singapore":      "Singapore",      "hong kong":     "Hong Kong",
+    "sydney":         "Australia",      "melbourne":     "Australia",
+    "toronto":        "Canada",         "vancouver":     "Canada",
+    "montreal":       "Canada",         "mexico city":   "Mexico",
+    "bangalore":      "India",          "mumbai":        "India",
+    "shanghai":       "China",          "beijing":       "China",
+    "são paulo":      "Brazil",         "sao paulo":     "Brazil",
 }
 
 
@@ -67,16 +134,28 @@ def _accepted_modes(profile: Profile) -> set[str]:
 
 
 def _extract_country(job: DiscoveredJob) -> Optional[str]:
-    """Best-effort country extraction. normalized_locations first; raw fallback."""
-    for nl in job.normalized_locations:
-        nl_lower = nl.lower()
-        for country in _KNOWN_COUNTRIES:
-            if country.lower() in nl_lower:
-                return country
-    text = " ".join(job.raw_location).lower()
+    """Best-effort country extraction.
+
+    Search order:
+      1. Word-boundary match against the country list (longer names first).
+      2. Word-boundary match against the city-to-country map.
+
+    Uses word boundaries to avoid false positives — substring matching
+    treated "houston" as containing "us", which mis-classified countries.
+    """
+    haystacks = list(job.normalized_locations) + list(job.raw_location)
+    text = " ".join(haystacks).lower()
+    if not text.strip():
+        return None
+
     for country in _KNOWN_COUNTRIES:
-        if country.lower() in text:
+        if re.search(rf"\b{re.escape(country.lower())}\b", text):
             return country
+
+    for city, country in _CITY_TO_COUNTRY.items():
+        if re.search(rf"\b{re.escape(city)}\b", text):
+            return country
+
     return None
 
 

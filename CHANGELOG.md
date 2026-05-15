@@ -2,6 +2,17 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.8 — 2026-05-15
+
+The v0.1.6 post-JD prefilter was right in shape but mostly inert because `_extract_country` couldn't read the location strings ATSes actually emit. Dry-run on Pavel's workspace showed post-filter dropping 63 of 742 Favorites (8.5%); after this fix, 656 of 678 drop (97%). Cost projection for next routine fire: **~$10–12 Pass B vs ~$70 in fire #3** (6x reduction).
+
+### Fixed
+- **`_extract_country` now recognizes 2-letter codes via word-boundary regex.** Previous substring match treated "houston" as containing "us" (false positive on Australia matching "AU" suffix elsewhere too). New logic uses `\b` boundaries and adds `US`, `IE`, `IL` to `_KNOWN_COUNTRIES` with aliases.
+- **City-to-country map** added for the top US + EU + global tech hubs. ATS adapters (especially Ashby) commonly emit city-only values like "San Francisco" or "Berlin" without a country code. The map handles ~60 cities covering the bulk of AI-50 + VC portfolio jobs. Extensible — add a row when a new pattern shows up.
+
+### Changed
+- `Ashby` workplaceType "Hybrid"/"OnSite"/"Remote" now reliably maps to `work_mode` — this was already correct in v0.1.6 but only useful once country extraction caught up.
+
 ## v0.1.7 — 2026-05-15
 
 Routine-debug visibility: populates `Runs.jsonl_log` so a failed Cloud Routine fire can be post-mortemed from Notion alone — no need to grab container logs.
