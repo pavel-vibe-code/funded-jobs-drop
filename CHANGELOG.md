@@ -2,6 +2,11 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.21 — 2026-05-16
+
+### Fixed
+- **The repo now actually ships `.claude/settings.json`.** INSTALL.md §4 has always stated *"the repo ships `.claude/settings.json` with the permission allowlist — the Routine clones this and applies it, you don't have to write it yourself"* — but the file was never created. Without it a Cloud Routine has no tool allowlist and stalls on the first `Bash`/`Agent` call (an unattended fire can't answer a permission prompt). The file now exists, committed, covering everything `/fd-run` invokes after v0.1.20: `orchestrator` + `recycle_feedback` Bash, the `qa`/`screener`/`scorer`/`summarize` agents, and `/tmp/fd-run` + `/tmp/fd-recycle` Read/Write. Routine permissions are now genuinely zero-config — clone the repo and the allowlist comes with it, no manual paste into the routine environment.
+
 ## v0.1.20 — 2026-05-16
 
 The feedback learning loop now runs automatically, and can archive rows you rejected.
