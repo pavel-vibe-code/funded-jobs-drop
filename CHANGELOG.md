@@ -2,6 +2,13 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.14 — 2026-05-16
+
+Runs rows now self-identify their plugin version. Post-mortem on the v0.1.13 503 work surfaced the gap: two re-fires (19:29, 21:57) both pre-dated the v0.1.13 diagnostic commit (22:17), so the diagnostic never ran — and the only way to know that was cross-referencing git commit timestamps against run `started_at`. A version stamped into the log removes that guesswork.
+
+### Added
+- **`jsonl_log` opens with a `meta` line carrying the plugin version.** `_app_version()` reads the repo-root `VERSION` file; `_build_jsonl_log()` emits it as the first JSONL line: `{"stage": "meta", "version": "0.1.14"}`. Zero Notion schema change — rides inside the existing `jsonl_log` property.
+
 ## v0.1.13 — 2026-05-15
 
 Diagnostic patch for Ashby 503s observed from Cloud Routine container (Pavel's 5th production fire). Local probe from residential IP returns 200 OK on all boards; same calls from routine return HTTP 503 — strongly suggests Cloudflare WAF blocking the routine container's datacenter egress.

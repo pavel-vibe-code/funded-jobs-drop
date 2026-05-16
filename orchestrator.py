@@ -636,6 +636,16 @@ def _build_errors_summary(source_errors: list, jd_fetch_failed: list,
     return " | ".join(parts)[:1500]
 
 
+def _app_version() -> str:
+    """Plugin version from the VERSION file at repo root. Logged into each
+    Runs row so a fire self-identifies which code produced it — no need to
+    cross-reference git commit timestamps against run times post-mortem."""
+    try:
+        return (Path(__file__).parent / "VERSION").read_text().strip()
+    except OSError:
+        return "unknown"
+
+
 def _build_jsonl_log(wd: Path, verdicts: list[dict]) -> str:
     """Aggregate per-stage state files into a JSONL debug log for Runs DB.
 
@@ -652,6 +662,10 @@ def _build_jsonl_log(wd: Path, verdicts: list[dict]) -> str:
 
     def _add(stage: str, payload: dict) -> None:
         lines.append(json.dumps({"stage": stage, **payload}, default=str))
+
+    # Stage 0: meta — plugin version that produced this fire. First line so a
+    # post-mortem reader sees immediately which code ran.
+    _add("meta", {"version": _app_version()})
 
     # Stage 1: discovery
     dmetrics = _load_json_or(wd / "discovery-metrics.json", {})
