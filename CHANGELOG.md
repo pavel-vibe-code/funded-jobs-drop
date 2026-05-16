@@ -2,6 +2,14 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.20 — 2026-05-16
+
+The feedback learning loop now runs automatically, and can archive rows you rejected.
+
+### Added
+- **Recycle is now Step 1 of every `/fd-run`** — it runs *before* discovery, so each fire scores against the freshest `learned_*` rules. Previously `/fd-recycle-feedback` was a separate manual command, which meant in Cloud Routine mode the learning loop effectively never ran. The step self-skips when there's no new feedback (the single Sonnet `qa` call happens only when there is), and recycle failures never block the fire. `/fd-recycle-feedback` remains as a standalone on-demand command.
+- **Recycle archives user-rejected rows.** `recycle_feedback apply` now sets `Status = "Dropped (feedback)"` on rows the user explicitly rejected — Match quality = `Feedback` with *user-typed* text. Scorer auto-flagged-but-unreviewed rows (`[Auto]` text only) and `OK` rows are deliberately left untouched. Archiving is deterministic — it runs even when the qa agent failed, since the user's rejection is ground truth regardless. `read_feedback_rows` now excludes `Dropped (feedback)` rows so processed feedback isn't re-fed to the qa agent (which would skew its "≥2 examples = a pattern" threshold).
+
 ## v0.1.19 — 2026-05-16
 
 Hardened `scorer.md` (Pass B) against two failure modes surfaced by a 3-model (Opus/Sonnet/Haiku) scoring comparison on a 19-job borderline test set.

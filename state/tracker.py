@@ -108,11 +108,20 @@ def write_evaluated(verdicts: list[dict]) -> dict[str, int]:
     return {"written": written, "failed": failed}
 
 
+# Status the learning loop sets on rows the user explicitly rejected (Match
+# quality = Feedback with user-typed text). Archives them out of the active view
+# and out of future feedback pools, so the qa agent isn't re-fed stale signal
+# on a job already actioned.
+DROPPED_FEEDBACK_STATUS = "Dropped (feedback)"
+
+
 def read_feedback_rows(limit: int = 200) -> list[dict]:
     """Return Tracker rows where the user has signalled feedback.
 
-    A row qualifies if Match quality != "OK" (the default) OR Feedback is non-empty.
-    Used by the qa agent to refine learned_exclusions + learned_examples.
+    A row qualifies if Match quality != "OK" (the default) OR Feedback is
+    non-empty — AND it has not already been archived by the learning loop
+    (Status = "Dropped (feedback)"). Used by the qa agent to refine
+    learned_exclusions + learned_examples.
 
     Returns plain dicts (not TrackerRow) since the qa agent needs richer fields
     than the dedup-focused TrackerRow carries.
@@ -124,11 +133,15 @@ def read_feedback_rows(limit: int = 200) -> list[dict]:
     client = NotionClient(config.notion_token)
     ds_id = client.validate_single_data_source(config.tracker_db_id)
 
-    # Notion `or` filter: Match quality != OK OR Feedback is not empty
+    # Match quality != OK OR Feedback non-empty — excluding rows a prior recycle
+    # already archived (re-feeding them would skew the qa agent's pattern count).
     notion_filter = {
-        "or": [
-            {"property": "Match quality", "select": {"does_not_equal": "OK"}},
-            {"property": "Feedback", "rich_text": {"is_not_empty": True}},
+        "and": [
+            {"or": [
+                {"property": "Match quality", "select": {"does_not_equal": "OK"}},
+                {"property": "Feedback", "rich_text": {"is_not_empty": True}},
+            ]},
+            {"property": "Status", "select": {"does_not_equal": DROPPED_FEEDBACK_STATUS}},
         ],
     }
 

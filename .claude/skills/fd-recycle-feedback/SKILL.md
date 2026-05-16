@@ -1,6 +1,6 @@
 ---
 name: fd-recycle-feedback
-description: Read user feedback from Tracker (Match quality changes + Feedback text), synthesize updated learned_exclusions + learned_examples via the qa agent, write back to Profile. Idempotent — re-running on the same feedback yields the same rules.
+description: Read user feedback from Tracker (Match quality changes + Feedback text), synthesize updated learned_exclusions + learned_examples via the qa agent, write back to Profile, and archive rows the user explicitly rejected. Idempotent — re-running on the same feedback yields the same rules. Also runs automatically as Step 1 of every /fd-run.
 ---
 
 # /fd-recycle-feedback — Funded Drop learning loop
@@ -44,7 +44,10 @@ If the agent's reply suggests failure (no confirmation, error message), re-dispa
 python3 -m recycle_feedback apply <RUN_ID>
 ```
 
-Reads `qa-output.json` and writes the new `learned_exclusions` + `learned_examples` back to the Profile row in Notion. If the agent's output is missing or malformed, this stage logs the issue and exits cleanly without touching Profile.
+Does two things:
+
+1. **Archives user-rejected rows.** Any feedback row where Match quality = `Feedback` AND the Feedback text is user-typed (not the scorer's `[Auto]`-prefixed note) gets Status set to `Dropped (feedback)` — out of the active view, and out of future feedback pools. This is deterministic and runs even if the qa agent failed.
+2. **Writes refined rules.** Reads `qa-output.json` and writes the new `learned_exclusions` + `learned_examples` to the Profile row. If the agent's output is missing or malformed, this part logs the issue and exits cleanly without touching Profile (the archiving in step 1 still happened).
 
 ## Step 4 — Report
 

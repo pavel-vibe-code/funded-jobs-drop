@@ -63,7 +63,7 @@ Total addressable surface: ~2,300 unique portfolio companies. After deterministi
 
 Four databases under a parent page you name (recommended: "Funded Drop" inside your existing workspace):
 
-- **Tracker** — every evaluated job. Your primary surface. Filter by Match (Strong/Decent/Stretch), Status (New/Saved/Closed/jd_fetch_failed), or Match quality (OK/Feedback). The `Why fits` column carries scorer reasoning grounded in your profile.
+- **Tracker** — every evaluated job. Your primary surface. Filter by Match (Strong/Decent/Stretch), Status (New/Saved/Closed/jd_fetch_failed/Dropped (feedback)), or Match quality (OK/Feedback). The `Why fits` column carries scorer reasoning grounded in your profile.
 - **Profile** — single-row DB holding your search prefs (variant, location, work modes, seniority, salary floor) and the free-text fields that shape scoring (`interest_description`, `pursue_blockers`, `stretch_indicators`). Edit via `/fd-settings`.
 - **Favorites** — pinned companies, including the 14-company AI-50 seed if enabled.
 - **Runs** — one row per fire. Summary, cost, per-stage counts, errors, JSONL log.
@@ -78,7 +78,7 @@ The scoring rubric is shaped by **your** profile, not a hardcoded taxonomy. Thre
 - `pursue_blockers` — disqualifying patterns. "Mandatory evenings." "US-only territories." "Coding as a hard requirement."
 - `stretch_indicators` — partial-fit signals. "Vague title," "<30 people," "industry mismatch."
 
-The qa learning loop (`/fd-recycle-feedback`) reads your Match-quality edits in Tracker and refines `learned_exclusions` + `learned_examples` over time. Auto-exclude flag closes the loop: when the scorer detects a `pursue_blocker`, the row writes `Match quality = Feedback` + `[Auto]`-prefixed note. If you flip that back to OK, that's a strong "over-block" signal qa picks up next cycle.
+The qa learning loop runs automatically as **Step 1 of every `/fd-run`** (and on demand via `/fd-recycle-feedback`): before the fire searches, it reads your Match-quality edits in Tracker, refines `learned_exclusions` + `learned_examples`, and archives rows you explicitly rejected (Status → `Dropped (feedback)`) — so each search applies your latest feedback before it scores anything. Auto-exclude flag closes the loop: when the scorer detects a `pursue_blocker`, the row writes `Match quality = Feedback` + `[Auto]`-prefixed note. If you flip that back to OK, that's a strong "over-block" signal qa picks up next cycle.
 
 ## Cost guide
 

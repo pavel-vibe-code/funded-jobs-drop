@@ -1,11 +1,11 @@
 ---
 name: fd-run
-description: Run a single fire — fetch fresh jobs from 7 Consider VCs + 5 Getro VCs + active Favorites, dedup against Tracker, apply deterministic filters, screen with Pass A (Haiku), score survivors with Pass B (Opus), write to Tracker, write Runs row, push Pursue rows to webhook.
+description: Run a single fire — recycle Tracker feedback, fetch fresh jobs from 7 Consider VCs + 5 Getro VCs + active Favorites, dedup against Tracker, apply deterministic filters, screen with Pass A (Haiku), score survivors with Pass B (Opus), write to Tracker, write Runs row, push Pursue rows to webhook.
 ---
 
 # /fd-run — Funded Drop pipeline orchestrator
 
-You are the orchestrator. The fire is a sequence of **deterministic Python stages** (invoked via `python3 -m orchestrator <stage> <run_id>`) interleaved with **parallel LLM agent dispatches** (screener, scorer, summarize).
+You are the orchestrator. The fire is a sequence of **deterministic Python stages** (invoked via `python3 -m orchestrator <stage> <run_id>`) interleaved with **parallel LLM agent dispatches** (qa, screener, scorer, summarize).
 
 Python does the deterministic work; agents do the LLM judgment; you wire them together. Per-fire state lives in `/tmp/fd-run/<run_id>/`. Notion holds cross-fire state.
 
@@ -24,7 +24,32 @@ python3 -c "import uuid; print(uuid.uuid4().hex)"
 
 Read the output (32 hex chars). **From here on, substitute that literal value wherever `<RUN_ID>` appears below.** Do not use `$RUN_ID` — shell vars don't persist between Bash calls.
 
-## Step 1 — Discovery (Python)
+## Step 1 — Recycle feedback (learning loop)
+
+Apply any feedback left in the Tracker **before** this fire searches — so scoring uses the freshest learned rules and rows you rejected are archived out of the way.
+
+```bash
+python3 -m recycle_feedback prepare <RUN_ID>
+```
+
+Reads Tracker feedback rows + current `Profile.learned_*`, writes `/tmp/fd-recycle/<RUN_ID>/feedback-input.json`. Read the printed feedback count:
+
+- `0` → no feedback to recycle. Continue to **Step 2 (Discovery)**.
+- `≥1` → dispatch the `qa` agent (single dispatch):
+
+  > Read `/tmp/fd-recycle/<RUN_ID>/feedback-input.json` and produce refined learned rules per your spec. Write the raw JSON object (no preamble, no markdown fences) to `/tmp/fd-recycle/<RUN_ID>/qa-output.json`. Don't echo anything else.
+
+  If the agent's reply suggests failure, re-dispatch the **same** prompt once. Then apply:
+
+  ```bash
+  python3 -m recycle_feedback apply <RUN_ID>
+  ```
+
+  `apply` writes the refined `Profile.learned_*` and archives rows you explicitly rejected (Match quality = Feedback with user-typed text) by setting their Status to `Dropped (feedback)`.
+
+Recycle failures never block the fire — log and continue to Step 2 regardless.
+
+## Step 2 — Discovery (Python)
 
 ```bash
 python3 -m orchestrator discovery <RUN_ID>
@@ -38,10 +63,10 @@ Count batches:
 ls /tmp/fd-run/<RUN_ID>/candidates-batch-*.json 2>/dev/null | wc -l
 ```
 
-- Result `0` → no candidates this fire. Skip directly to **Step 6 (finalize)**.
-- Result `≥1` → continue to Step 2.
+- Result `0` → no candidates this fire. Skip directly to **Step 7 (finalize)**.
+- Result `≥1` → continue to Step 3.
 
-## Step 2 — Pass A: Screener (parallel agent dispatch)
+## Step 3 — Pass A: Screener (parallel agent dispatch)
 
 For each `candidates-batch-{N}.json`, dispatch the `screener` agent. Cap parallel dispatches at **8 per message** (WAVE_SIZE). If there are more than 8 batches, send sequential messages of up to 8 dispatches each — but each individual message dispatches all its agents in parallel.
 
@@ -63,7 +88,7 @@ Then aggregate:
 python3 -m orchestrator aggregate <RUN_ID>
 ```
 
-## Step 3 — JD fetch (Python)
+## Step 4 — JD fetch (Python)
 
 ```bash
 python3 -m orchestrator jd_fetch <RUN_ID>
@@ -77,10 +102,10 @@ Count scorer inputs:
 ls /tmp/fd-run/<RUN_ID>/scorer-input-*.json 2>/dev/null | wc -l
 ```
 
-- Result `0` → no JDs fetched. Skip to **Step 4b (write)** — the failures still get written to Tracker as `jd_fetch_failed`.
-- Result `≥1` → continue to Step 3a (post-JD screener for Favorites).
+- Result `0` → no JDs fetched. Skip to **Step 5b (write)** — the failures still get written to Tracker as `jd_fetch_failed`.
+- Result `≥1` → continue to Step 4a (post-JD screener for Favorites).
 
-## Step 3a — Post-JD screener on Favorites (parallel agent dispatch, Haiku)
+## Step 4a — Post-JD screener on Favorites (parallel agent dispatch, Haiku)
 
 Favorites bypassed Pass A at discovery because they had no structured tags. JD fetch enriched them with title/location/work_mode/salary. Now run Pass A on the survivors to catch ambiguous-location cases the deterministic post-JD prefilter missed (e.g. "Remote, Anywhere" at a US-headquartered company).
 
@@ -90,9 +115,9 @@ Count the post-JD batches:
 ls /tmp/fd-run/<RUN_ID>/favorites-postjd-batch-*.json 2>/dev/null | wc -l
 ```
 
-If `0` → skip to Step 4.
+If `0` → skip to Step 5.
 
-For each `favorites-postjd-batch-{N}.json`, dispatch the `screener` agent (same agent as Step 2). WAVE_SIZE=8 parallel per message.
+For each `favorites-postjd-batch-{N}.json`, dispatch the `screener` agent (same agent as Step 3). WAVE_SIZE=8 parallel per message.
 
 **Prompt template** (substitute `<RUN_ID>` and `<N>` literally):
 
@@ -112,7 +137,7 @@ python3 -m orchestrator postjd_screen_apply <RUN_ID>
 
 This deletes scorer-input files for drop verdicts so the Opus scorer doesn't run on them.
 
-## Step 4 — Pass B: Scorer (parallel agent dispatch)
+## Step 5 — Pass B: Scorer (parallel agent dispatch)
 
 For each `scorer-input-{idx}.json`, dispatch the `scorer` agent. WAVE_SIZE=8.
 
@@ -128,7 +153,7 @@ ls /tmp/fd-run/<RUN_ID>/scorer-output-*.json 2>/dev/null | wc -l
 
 Re-dispatch missing ones once, then proceed regardless.
 
-## Step 4b — Tracker write (Python)
+## Step 5b — Tracker write (Python)
 
 ```bash
 python3 -m orchestrator write <RUN_ID>
@@ -136,7 +161,7 @@ python3 -m orchestrator write <RUN_ID>
 
 Reads scorer outputs + jd-failed, writes rows to Notion Tracker, builds `summarize-input.json`.
 
-## Step 5 — Summary (single agent dispatch)
+## Step 6 — Summary (single agent dispatch)
 
 Dispatch the `summarize` agent once:
 
@@ -144,7 +169,7 @@ Dispatch the `summarize` agent once:
 
 If the agent fails or `summary.json` is missing, the finalize stage falls back to an auto-generated summary. Don't retry.
 
-## Step 6 — Finalize (Python)
+## Step 7 — Finalize (Python)
 
 ```bash
 python3 -m orchestrator finalize <RUN_ID>
@@ -152,7 +177,7 @@ python3 -m orchestrator finalize <RUN_ID>
 
 Writes the Runs row to Notion. POSTs the webhook if the user has Pursue rows AND webhook is configured/enabled. Webhook errors are non-fatal and logged in the Runs row.
 
-## Step 7 — Report
+## Step 8 — Report
 
 Display `/tmp/fd-run/<RUN_ID>/finalize-result.json`. In manual mode the user reads it; in routine mode it lands in the run log.
 
@@ -165,11 +190,13 @@ cat /tmp/fd-run/<RUN_ID>/finalize-result.json
 The routine plugin must auto-allow these tool patterns for the fire to run unattended:
 
 - `Bash(python3 -m orchestrator *)`
+- `Bash(python3 -m recycle_feedback *)`
 - `Bash(python3 -c *)`
 - `Bash(ls /tmp/fd-run/*)`
 - `Bash(cat /tmp/fd-run/*)`
-- `Agent(screener)`, `Agent(scorer)`, `Agent(summarize)`
+- `Agent(qa)`, `Agent(screener)`, `Agent(scorer)`, `Agent(summarize)`
 - `Read(/tmp/fd-run/**)`, `Write(/tmp/fd-run/**)`
+- `Read(/tmp/fd-recycle/**)`, `Write(/tmp/fd-recycle/**)`
 
 If any of these prompt for permission at fire time, the routine setup is incomplete.
 

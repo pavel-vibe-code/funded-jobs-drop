@@ -24,7 +24,7 @@ import uuid
 from pathlib import Path
 
 from state.profile import Profile, read as profile_read, update as profile_update
-from state.tracker import read_feedback_rows
+from state.tracker import DROPPED_FEEDBACK_STATUS, read_feedback_rows, update_status
 
 
 def _work_dir(run_id: str) -> Path:
@@ -55,15 +55,51 @@ def prepare(run_id: str) -> dict:
     return {"feedback_count": len(rows)}
 
 
-def apply(run_id: str) -> dict:
-    """Read qa-output.json and write learned_* fields to Profile."""
+def _drop_user_rejected(run_id: str) -> int:
+    """Archive rows the user explicitly rejected — Status = Dropped (feedback).
+
+    A row counts as user-rejected when Match quality is "Feedback" AND the
+    Feedback text is user-typed — i.e. not the scorer's own `[Auto]`-prefixed
+    auto-note. Scorer auto-flagged-but-unreviewed rows (`[Auto]` text only) and
+    OK rows are deliberately left untouched: the user hasn't acted on them.
+
+    Deterministic and independent of the qa agent — runs even if rule
+    synthesis failed, since the user's rejection is ground truth either way.
+    """
     wd = _work_dir(run_id)
+    try:
+        fb = json.loads((wd / "feedback-input.json").read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return 0
+    dropped = 0
+    for r in fb.get("feedback_rows", []):
+        pid = r.get("page_id")
+        text = (r.get("feedback") or "").strip()
+        if (pid and (r.get("match_quality") or "OK") == "Feedback"
+                and text and not text.startswith("[Auto]")):
+            try:
+                update_status(pid, DROPPED_FEEDBACK_STATUS)
+                dropped += 1
+            except Exception as e:
+                print(f"  warn: could not archive {pid}: {e}")
+    return dropped
+
+
+def apply(run_id: str) -> dict:
+    """Archive user-rejected rows, then write refined learned_* to Profile."""
+    wd = _work_dir(run_id)
+
+    # Archive user-rejected rows first — deterministic, independent of the qa
+    # agent's success, so it happens even when rule synthesis failed.
+    dropped = _drop_user_rejected(run_id)
+
     out_path = wd / "qa-output.json"
     try:
         data = json.loads(out_path.read_text())
     except (FileNotFoundError, json.JSONDecodeError) as e:
-        print(f"  warn: qa-output missing or malformed ({e}); aborting apply")
-        return {"updated": False, "reason": str(e)}
+        print(f"  warn: qa-output missing or malformed ({e}); "
+              f"archived {dropped} user-rejected row(s), Profile unchanged")
+        return {"updated": False, "dropped": dropped, "reason": str(e)}
 
     learned_exclusions = (data.get("learned_exclusions") or "").strip()
     learned_examples   = (data.get("learned_examples")   or "").strip()
@@ -73,8 +109,9 @@ def apply(run_id: str) -> dict:
         learned_examples=learned_examples,
     )
     rationale = data.get("rationale", "")
-    print(f"apply: updated Profile.learned_*. Rationale: {rationale[:200]}")
-    return {"updated": True, "rationale": rationale}
+    print(f"apply: updated Profile.learned_*; archived {dropped} user-rejected "
+          f"row(s). Rationale: {rationale[:200]}")
+    return {"updated": True, "rationale": rationale, "dropped": dropped}
 
 
 _COMMANDS = {"prepare": prepare, "apply": apply}
