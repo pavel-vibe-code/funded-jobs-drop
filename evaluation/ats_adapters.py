@@ -442,27 +442,33 @@ def parse_workday_url(url: str) -> Optional[Tuple[str, str, str, str]]:
     return host, tenant, site, external_path
 
 
-def fetch_active_ids_workday(slug: str = "", careers_url: str = "",
-                             **_) -> Tuple[set, Optional[str]]:
-    """Workday CXS list endpoint — POST, offset-paginated WORKDAY_PAGE_SIZE/page.
+def fetch_workday_postings(careers_url: str) -> Tuple[list, Optional[str]]:
+    """Workday CXS list endpoint — returns a list of posting dicts.
 
-    Config rides in the Favorite's careers_url (the full myworkdayjobs.com URL);
-    parse_workday_url derives host / tenant / site. Returns the set of job
-    externalPaths: Workday's externalPath both uniquely identifies a posting
-    and composes directly into the public job URL and the CXS detail endpoint,
-    so it travels as our job id (cf. numeric ids elsewhere).
+    Config rides in the Favorite's careers_url (the full myworkdayjobs.com
+    URL); parse_workday_url derives host / tenant / site. Unlike other ATSes'
+    active-id endpoints, Workday's CXS list carries each posting's location
+    and title up front — the Favorites source uses the location to region-
+    filter jobs BEFORE the per-job JD fetch, so an out-of-region MSD/Nvidia/
+    Adobe req is dropped on a string already in hand rather than after a
+    wasted detail call.
 
-    Pagination quirk (validated live, v0.1.16): Workday's `total` field is
-    accurate only on the first page — it collapses to 0 on every page after —
-    so the loop terminates on a short page (len < WORKDAY_PAGE_SIZE), never on
-    `total`. WORKDAY_MAX_PAGES still bounds mega-tenants (MSD ~823, Nvidia 2k).
+    Each dict: {"external_path", "location", "title"}. external_path both
+    uniquely identifies a posting and composes into the public job URL and
+    the CXS detail endpoint, so it travels as our job id.
+
+    POST, offset-paginated. Pagination quirk (validated live, v0.1.16):
+    Workday's `total` field is accurate only on the first page — it collapses
+    to 0 on every page after — so the loop terminates on a short page
+    (len < WORKDAY_PAGE_SIZE), never on `total`. WORKDAY_MAX_PAGES still
+    bounds mega-tenants (MSD ~823 reqs, Nvidia ~2k).
     """
     parsed = parse_workday_url(careers_url)
     if not parsed:
-        return set(), f"workday: careers_url is not a myworkdayjobs.com URL: {careers_url!r}"
+        return [], f"workday: careers_url is not a myworkdayjobs.com URL: {careers_url!r}"
     host, tenant, site, _ = parsed
     cxs_url = WORKDAY_CXS_LIST.format(host=host, tenant=tenant, site=site)
-    paths: set = set()
+    out: list = []
     offset = 0
     for _page in range(WORKDAY_MAX_PAGES):
         body, err = http_post_json(cxs_url, {
@@ -470,24 +476,40 @@ def fetch_active_ids_workday(slug: str = "", careers_url: str = "",
             "offset": offset, "searchText": "",
         })
         if err:
-            return set(), err
+            return [], err
         try:
             data = json.loads(body.decode("utf-8"))
         except Exception as e:
-            return set(), f"parse:{e}"
+            return [], f"parse:{e}"
         postings = data.get("jobPostings", [])
         if not isinstance(postings, list):
-            return set(), "unexpected_shape"
+            return [], "unexpected_shape"
         for jp in postings:
             ep = jp.get("externalPath")
             if ep:
-                paths.add(ep)
+                out.append({
+                    "external_path": ep,
+                    "location": jp.get("locationsText", "") or "",
+                    "title": jp.get("title", "") or "",
+                })
         offset += len(postings)
         # A page shorter than the limit is the last one. `total` is unreliable
         # past page 1 (Workday returns 0), so it must not gate termination.
         if len(postings) < WORKDAY_PAGE_SIZE:
             break
-    return paths, None
+    return out, None
+
+
+def fetch_active_ids_workday(slug: str = "", careers_url: str = "",
+                             **_) -> Tuple[set, Optional[str]]:
+    """Active externalPath set for a Workday board — the registry's uniform
+    active-id contract. Thin wrapper over fetch_workday_postings, which the
+    Favorites source calls directly to also get locations for pre-JD filtering.
+    """
+    postings, err = fetch_workday_postings(careers_url)
+    if err:
+        return set(), err
+    return {p["external_path"] for p in postings}, None
 
 
 # === Adapter registry =========================================================

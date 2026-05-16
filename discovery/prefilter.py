@@ -116,7 +116,81 @@ _CITY_TO_COUNTRY = {
     "bangalore":      "India",          "mumbai":        "India",
     "shanghai":       "China",          "beijing":       "China",
     "são paulo":      "Brazil",         "sao paulo":     "Brazil",
+    # Additional hubs seen in Workday enterprise tenants (MSD/Nvidia/Adobe).
+    "san jose":       "United States",  "lehi":          "United States",
+    "mclean":         "United States",  "ottawa":        "Canada",
+    "noida":          "India",          "hyderabad":     "India",
+    "pune":           "India",          "chennai":       "India",
+    "gurugram":       "India",          "gurgaon":       "India",
+    "seoul":          "South Korea",    "riyadh":        "Saudi Arabia",
+    "bangkok":        "Thailand",       "jakarta":       "Indonesia",
+    "manila":         "Philippines",    "kuala lumpur":  "Malaysia",
+    "dubai":          "United Arab Emirates",
 }
+
+# ISO 3166-1 alpha-3 → country, for the "DEU - Berlin - …" / "MYS - Selangor"
+# location format Workday tenants emit (MSD et al.). Matched only as a leading
+# "XXX - " token (see _country_from_text) so English-word codes can't misfire.
+# EU-region codes must map to names present in _EU_REGION / _EU_UK_IE; the rest
+# need only be accurate (they classify as out-of-region). Missing codes degrade
+# safely to "ambiguous" — never a wrong drop.
+_ISO3_TO_COUNTRY = {
+    # EU continental + EEA/EFTA
+    "deu": "Germany", "fra": "France", "esp": "Spain", "nld": "Netherlands",
+    "ita": "Italy", "pol": "Poland", "prt": "Portugal", "swe": "Sweden",
+    "dnk": "Denmark", "fin": "Finland", "nor": "Norway", "aut": "Austria",
+    "che": "Switzerland", "bel": "Belgium", "cze": "Czechia",
+    "ltu": "Lithuania", "est": "Estonia", "lva": "Latvia", "rou": "Romania",
+    "bgr": "Bulgaria", "hun": "Hungary", "svk": "Slovakia", "svn": "Slovenia",
+    "hrv": "Croatia", "grc": "Greece", "isl": "Iceland", "lux": "Luxembourg",
+    "mlt": "Malta", "cyp": "Cyprus",
+    # UK + Ireland
+    "gbr": "United Kingdom", "irl": "Ireland",
+    # Americas
+    "usa": "United States", "can": "Canada", "mex": "Mexico", "bra": "Brazil",
+    "arg": "Argentina", "chl": "Chile", "col": "Colombia", "per": "Peru",
+    "ecu": "Ecuador", "cri": "Costa Rica", "pan": "Panama",
+    "pri": "Puerto Rico", "ury": "Uruguay", "ven": "Venezuela",
+    "dom": "Dominican Republic", "gtm": "Guatemala",
+    # Asia
+    "chn": "China", "ind": "India", "jpn": "Japan", "kor": "South Korea",
+    "twn": "Taiwan", "hkg": "Hong Kong", "sgp": "Singapore", "mys": "Malaysia",
+    "idn": "Indonesia", "tha": "Thailand", "vnm": "Vietnam",
+    "phl": "Philippines", "pak": "Pakistan", "bgd": "Bangladesh",
+    # Oceania
+    "aus": "Australia", "nzl": "New Zealand",
+    # Africa
+    "zaf": "South Africa", "egy": "Egypt", "nga": "Nigeria", "ken": "Kenya",
+    "mar": "Morocco",
+    # Middle East + other
+    "tur": "Turkey", "isr": "Israel", "sau": "Saudi Arabia",
+    "are": "United Arab Emirates", "qat": "Qatar", "lbn": "Lebanon",
+    "jor": "Jordan", "kwt": "Kuwait", "ukr": "Ukraine", "rus": "Russia",
+    "srb": "Serbia",
+}
+
+# US state names → United States. Workday enterprise tenants post location as
+# "Remote Illinois", "Austin, Texas" etc.; without this such jobs go undetected
+# by the country/city passes and slip through the variant-region filter.
+_US_STATES = {
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine",
+    "maryland", "massachusetts", "michigan", "minnesota", "mississippi",
+    "missouri", "montana", "nebraska", "nevada", "new hampshire", "new jersey",
+    "new mexico", "north carolina", "north dakota", "ohio", "oklahoma",
+    "oregon", "pennsylvania", "rhode island", "south carolina", "south dakota",
+    "tennessee", "texas", "utah", "vermont", "virginia", "washington",
+    "west virginia", "wisconsin", "wyoming",
+}
+
+# Combined country-name matcher: the curated S3 list + every ISO-3 map value +
+# "Korea" (Workday writes the short form). Sorted longest-first so multi-word
+# names win over their abbreviations ("United Kingdom" before "UK").
+_COUNTRY_NAMES = sorted(
+    set(_KNOWN_COUNTRIES) | set(_ISO3_TO_COUNTRY.values()) | {"Korea"},
+    key=len, reverse=True,
+)
 
 # Variant region sets — S1a hard-drops jobs in countries outside the user's
 # variant region. EU continental + EEA/EFTA; UK + Ireland are conditional on
@@ -186,30 +260,68 @@ def _accepted_modes(profile: Profile) -> set[str]:
     return accepted
 
 
-def _extract_country(job: DiscoveredJob) -> Optional[str]:
-    """Best-effort country extraction.
+def _country_from_text(text: str) -> Optional[str]:
+    """Country name from a lower-cased location string.
 
     Search order:
       1. Word-boundary match against the country list (longer names first).
       2. Word-boundary match against the city-to-country map.
 
-    Uses word boundaries to avoid false positives — substring matching
-    treated "houston" as containing "us", which mis-classified countries.
+    Word boundaries avoid false positives — substring matching treated
+    "houston" as containing "us", which mis-classified countries.
     """
-    haystacks = list(job.normalized_locations) + list(job.raw_location)
-    text = " ".join(haystacks).lower()
     if not text.strip():
         return None
-
-    for country in _KNOWN_COUNTRIES:
+    # Leading ISO-3166 alpha-3 code in Workday's "XXX - region - city" format.
+    # Anchored to the start AND requiring the " - " separator, so English-word
+    # codes (AND, ARE, CAN) can't false-match a city/place name.
+    iso = re.match(r"([a-z]{3})\s+-\s+", text)
+    if iso and iso.group(1) in _ISO3_TO_COUNTRY:
+        return _ISO3_TO_COUNTRY[iso.group(1)]
+    for country in _COUNTRY_NAMES:
         if re.search(rf"\b{re.escape(country.lower())}\b", text):
             return country
-
+    for state in _US_STATES:
+        if re.search(rf"\b{re.escape(state)}\b", text):
+            return "United States"
     for city, country in _CITY_TO_COUNTRY.items():
         if re.search(rf"\b{re.escape(city)}\b", text):
             return country
-
     return None
+
+
+def _extract_country(job: DiscoveredJob) -> Optional[str]:
+    """Best-effort country extraction from a job's location fields."""
+    haystacks = list(job.normalized_locations) + list(job.raw_location)
+    return _country_from_text(" ".join(haystacks).lower())
+
+
+def location_in_variant_region(location_text: str,
+                               profile: Profile) -> Optional[bool]:
+    """Variant-region membership for a raw location string.
+
+    Returns True (in-region), False (out-of-region), or None — None meaning
+    no country was detectable, or no variant filter applies to this profile;
+    the caller should keep the job and defer to post-JD screening.
+
+    Mirrors the S1a check in `apply`, but works on a bare string so the
+    Favorites source can drop obviously-out-of-region jobs *before* the
+    per-job JD fetch, for ATSes whose listing response carries a location
+    (Workday). Ambiguous (None) is deliberately kept — same lax policy as S1a.
+    """
+    allowed = _allowed_countries_for(profile)
+    if allowed is None:
+        return None
+    text = (location_text or "").lower().strip()
+    if not text:
+        return None
+    hints = _region_hints_for(profile.variant)
+    if hints and any(re.search(rf"\b{re.escape(h)}\b", text) for h in hints):
+        return True
+    country = _country_from_text(text)
+    if country is None:
+        return None
+    return country.lower() in allowed
 
 
 def _same_country(extracted: str, home: str) -> bool:

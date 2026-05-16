@@ -11,9 +11,13 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from typing import Optional
 
+from discovery.prefilter import location_in_variant_region
 from discovery.sources.base import DiscoveredJob
-from evaluation.ats_adapters import active_ids_for, parse_workday_url
+from evaluation.ats_adapters import (
+    active_ids_for, fetch_workday_postings, parse_workday_url,
+)
 from state.favorites import read_active
 from state.profile import Profile
 
@@ -72,6 +76,30 @@ def _construct_url(ats_type: str, slug: str, job_id: str, careers_url: str = "")
     return patterns.get(ats_type, f"https://example.com/unknown/{slug}/{job_id}")
 
 
+def _workday_jobs(fav, profile: Profile) -> tuple[list[DiscoveredJob], Optional[str]]:
+    """Workday Favorite → DiscoveredJobs, region-filtered before the JD fetch.
+
+    Workday's CXS list response carries each posting's location, so a job
+    whose location is detectably outside the profile's variant region is
+    dropped here — saving the per-job JD fetch (Workday mega-tenants like
+    MSD/Nvidia/Adobe are mostly out-of-region for an EU/US-scoped profile).
+    Ambiguous locations (no country detected) are kept and deferred to
+    post-JD screening, exactly like every other Favorite.
+    """
+    postings, err = fetch_workday_postings(fav.careers_url)
+    if err:
+        return [], err
+    jobs: list[DiscoveredJob] = []
+    for p in postings:
+        if location_in_variant_region(p["location"], profile) is False:
+            continue  # detected out-of-region — skip before the JD fetch
+        jobs.append(_convert(p["external_path"], fav.name, fav.ats_slug,
+                             "workday", fav.careers_url))
+    print(f"  [Favorites/{fav.name}: workday — {len(postings)} postings, "
+          f"{len(jobs)} kept after pre-JD region filter]")
+    return jobs, None
+
+
 def fetch(profile: Profile, since_epoch: int) -> tuple[list[DiscoveredJob], list[str]]:
     """Fetch active jobs for every active Favorite via its ATS adapter.
 
@@ -89,28 +117,30 @@ def fetch(profile: Profile, since_epoch: int) -> tuple[list[DiscoveredJob], list
     for fav in read_active():
         if not fav.ats_type:
             continue
-        # Workday's config (tenant + pod + site) lives entirely in careers_url;
-        # every other adapter keys off ats_slug.
-        if fav.ats_type == "workday":
-            if not fav.careers_url:
-                continue
-        elif not fav.ats_slug:
-            continue
         try:
-            active_ids, err = active_ids_for(
-                fav.ats_type,
-                fav.ats_slug,
-                careers_url=fav.careers_url,
-            )
+            if fav.ats_type == "workday":
+                # Workday config (tenant + pod + site) lives in careers_url;
+                # _workday_jobs region-filters before the JD fetch.
+                if not fav.careers_url:
+                    continue
+                fav_jobs, err = _workday_jobs(fav, profile)
+            else:
+                # Every other adapter keys off ats_slug + a flat active-id set.
+                if not fav.ats_slug:
+                    continue
+                active_ids, err = active_ids_for(
+                    fav.ats_type, fav.ats_slug, careers_url=fav.careers_url)
+                fav_jobs = [
+                    _convert(job_id, fav.name, fav.ats_slug, fav.ats_type,
+                             fav.careers_url)
+                    for job_id in (active_ids or ())
+                ]
             if err:
                 msg = f"Favorites/{fav.name} ({fav.ats_type}:{fav.ats_slug}): {err}"
                 print(f"  [{msg}]")
                 errors.append(msg)
                 continue
-            for job_id in active_ids:
-                jobs.append(_convert(
-                    job_id, fav.name, fav.ats_slug, fav.ats_type, fav.careers_url
-                ))
+            jobs.extend(fav_jobs)
         except Exception as e:
             msg = f"Favorites/{fav.name}: {type(e).__name__}: {e}"
             print(f"  [{msg}]")

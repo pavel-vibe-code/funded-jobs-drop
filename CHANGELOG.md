@@ -2,6 +2,19 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.17 — 2026-05-16
+
+Workday favorites are region-filtered *before* the per-job JD fetch. Workday mega-tenants (MSD, Nvidia, Adobe) carry ~500 jobs each, mostly outside an EU/US-scoped profile's region — previously every one got auto-promoted and JD-fetched, then dropped post-JD. Now the obviously-out-of-region ones are dropped on a location string already in hand.
+
+### Added
+- **Pre-JD region filter for Workday favorites.** Workday's CXS *list* response carries each posting's `locationsText`, so the Favorites source (`_workday_jobs`) classifies location against the profile's variant region and drops out-of-region jobs before they become candidates. `fetch_workday_postings()` returns posting dicts (location + title); `fetch_active_ids_workday()` is now a thin wrapper over it. Measured live: **~50% dropped pre-JD** (764/1500 across MSD+Nvidia+Adobe). The rest are in-region or multi-location reqs — Workday collapses those to "N Locations" in the list, genuinely unresolvable without the detail call, so they're kept and deferred to post-JD screening.
+- **`location_in_variant_region()`** in `prefilter` — variant-region check on a bare location string (vs `apply`'s DiscoveredJob-based S1a). Returns True / False / None; None (ambiguous) is kept, same lax policy as S1a.
+- **ISO-3166 alpha-3 country recognition.** Workday writes location as `DEU - Berlin - …`; `_country_from_text` resolves a leading `XXX - ` ISO-3 token — anchored to the start and separator-gated, so English-word codes (AND/ARE/CAN) can't false-match.
+- **Location-data expansion** for enterprise-tenant coverage: `_country_from_text` now matches the full ISO-3 country set (+ "Korea"), all 50 US states (`Remote Illinois` → United States), and ~18 more global hub cities (San Jose — 103 Adobe reqs alone — Noida, Seoul, …). Also sharpens VC-job S1a/S3 detection.
+
+### Note
+Eliminating the residual multi-location JD-fetches would need server-side CXS faceting (querying Workday with an EU location facet) — a larger, tenant-specific change, deferred.
+
 ## v0.1.16 — 2026-05-16
 
 Workday adapter validated end-to-end against the live CXS API (the wd5 pod returned from maintenance). One pagination bug found and fixed.
