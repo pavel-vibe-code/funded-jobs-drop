@@ -13,7 +13,7 @@ import os
 from datetime import datetime, timezone
 
 from discovery.sources.base import DiscoveredJob
-from evaluation.ats_adapters import active_ids_for
+from evaluation.ats_adapters import active_ids_for, parse_workday_url
 from state.favorites import read_active
 from state.profile import Profile
 
@@ -27,7 +27,7 @@ def _convert(active_id: str, favorite_name: str, favorite_slug: str,
     at Discovery time — that comes during Evaluation's JD fetch step.
     """
     # Construct a canonical URL pattern per ATS type
-    canonical_url = _construct_url(ats_type, favorite_slug, active_id)
+    canonical_url = _construct_url(ats_type, favorite_slug, active_id, careers_url)
     return DiscoveredJob(
         canonical_url=canonical_url,
         title="",  # populated at Evaluation JD-fetch time
@@ -45,8 +45,17 @@ def _convert(active_id: str, favorite_name: str, favorite_slug: str,
     )
 
 
-def _construct_url(ats_type: str, slug: str, job_id: str) -> str:
+def _construct_url(ats_type: str, slug: str, job_id: str, careers_url: str = "") -> str:
     """Build the canonical apply URL per ATS type."""
+    if ats_type == "workday":
+        # job_id is the Workday externalPath (/job/...); compose it onto the
+        # tenant's careers host + site to form the real public job URL — which
+        # jd_fetch then parses straight back into the CXS detail endpoint.
+        parsed = parse_workday_url(careers_url)
+        if parsed:
+            host, _tenant, site, _ = parsed
+            return f"https://{host}/{site}{job_id}"
+        return careers_url
     patterns = {
         "greenhouse":      f"https://job-boards.greenhouse.io/{slug}/jobs/{job_id}",
         "ashby":           f"https://jobs.ashbyhq.com/{slug}/{job_id}",
@@ -78,7 +87,14 @@ def fetch(profile: Profile, since_epoch: int) -> tuple[list[DiscoveredJob], list
     jobs: list[DiscoveredJob] = []
     errors: list[str] = []
     for fav in read_active():
-        if not fav.ats_type or not fav.ats_slug:
+        if not fav.ats_type:
+            continue
+        # Workday's config (tenant + pod + site) lives entirely in careers_url;
+        # every other adapter keys off ats_slug.
+        if fav.ats_type == "workday":
+            if not fav.careers_url:
+                continue
+        elif not fav.ats_slug:
             continue
         try:
             active_ids, err = active_ids_for(

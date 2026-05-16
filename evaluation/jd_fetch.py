@@ -3,8 +3,8 @@
 Getro JDs: fetch the per-job detail page (no auth, no LLM), parse __NEXT_DATA__
   for currentJob.description.
 Consider/Favorites JDs: follow the canonical URL to the native ATS (Greenhouse,
-  Ashby, Lever) → fall back to the customer's page HTML stripped to main
-  content when the URL doesn't match a known ATS pattern.
+  Ashby, Lever, Workday) → fall back to the customer's page HTML stripped to
+  main content when the URL doesn't match a known ATS pattern.
 
 Page-scrape fallback covers:
   - Greenhouse-via-custom-domain (wiz.io, bolt.eu, bigid.com etc. that carry
@@ -29,7 +29,7 @@ from typing import Optional
 
 from config.vcs import GETRO_VCS
 from discovery.sources.base import DiscoveredJob
-from evaluation.ats_adapters import http_get
+from evaluation.ats_adapters import http_get, parse_workday_url
 
 
 USER_AGENT = (
@@ -138,7 +138,7 @@ def fetch_jd_for_url(url: str) -> tuple[str, dict, Optional[str]]:
     location / salary parsed from the ATS response when available; empty
     dict when not (e.g. page-scrape fallback).
 
-    Direct ATS paths: Greenhouse, Ashby, Lever.
+    Direct ATS paths: Greenhouse, Ashby, Lever, Workday.
     Fallback: any other URL goes to the page-scrape extractor.
 
     Used by both the in-fire JD fetch (via `fetch()`) and the rescore path.
@@ -149,6 +149,8 @@ def fetch_jd_for_url(url: str) -> tuple[str, dict, Optional[str]]:
         return _fetch_ashby_jd(url)
     if "jobs.lever.co" in url:
         return _fetch_lever_jd(url)
+    if ".myworkdayjobs.com" in url:
+        return _fetch_workday_jd(url)
     return _fetch_via_page_scrape(url)
 
 
@@ -395,3 +397,43 @@ def _fetch_lever_jd(url: str) -> tuple[str, dict, Optional[str]]:
         meta["salary_currency"] = sr.get("currency") or "USD"
         meta["salary_disclosed"] = True
     return description, meta, None
+
+
+def _fetch_workday_jd(url: str) -> tuple[str, dict, Optional[str]]:
+    """GET the Workday CXS job-detail endpoint for a public job URL.
+
+    `url` is the canonical job URL the Favorites source builds:
+    https://{host}/{site}/job/...  The detail endpoint is a GET (the list is
+    a POST) at https://{host}/wday/cxs/{tenant}/{site}{externalPath}.
+
+    NOTE (v0.1.15): the response shape (jobPostingInfo.jobDescription) is from
+    the documented CXS contract — Workday was under maintenance at build time.
+    Validate against the live API before relying on this in production.
+    """
+    parsed = parse_workday_url(url)
+    if not parsed or not parsed[3]:
+        return "", {}, f"could not parse Workday job URL: {url}"
+    host, tenant, site, external_path = parsed
+    api_url = f"https://{host}/wday/cxs/{tenant}/{site}{external_path}"
+    body, err = http_get(api_url, accept="application/json")
+    if err or not body:
+        return "", {}, f"Workday API error: {err}"
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError as e:
+        return "", {}, f"Workday JSON parse: {e}"
+    info = data.get("jobPostingInfo") or {}
+    description = info.get("jobDescription") or ""
+    if not description:
+        return "", {}, "Workday jobDescription empty"
+    meta: dict = {}
+    if info.get("title"):
+        meta["title"] = info["title"]
+    if info.get("location"):
+        meta["location"] = info["location"]
+    remote = (info.get("remoteType") or "").lower()
+    if remote:
+        meta["work_mode"] = ("remote" if "remote" in remote
+                             else "hybrid" if "hybrid" in remote else "on_site")
+    # jobDescription is HTML — reuse the deterministic stripper.
+    return _strip_html_to_text(description), meta, None

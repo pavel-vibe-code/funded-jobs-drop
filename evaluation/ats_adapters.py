@@ -42,8 +42,41 @@ USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
 TIMEOUT_S  = 20
 
 
+def _format_http_error(e: urllib.error.HTTPError) -> str:
+    """Diagnostic error string for an HTTPError: code, cf-ray, server header,
+    and a short body snippet — see http_get for why this matters."""
+    try:
+        body_snippet = e.read().decode("utf-8", "replace")[:200]
+    except Exception:
+        body_snippet = ""
+    bits = [f"http_{e.code}"]
+    cf_ray = e.headers.get("cf-ray") or e.headers.get("CF-RAY") or ""
+    if cf_ray:
+        bits.append(f"cf-ray={cf_ray}")
+    server = e.headers.get("server") or ""
+    if server:
+        bits.append(f"server={server}")
+    if body_snippet:
+        clean = " ".join(body_snippet.split())[:120]
+        bits.append(f"body={clean!r}")
+    return " | ".join(bits)
+
+
+def _do_request(req: urllib.request.Request) -> Tuple[Optional[bytes], Optional[str]]:
+    """Execute a urllib request. Returns (body_bytes, error_string)."""
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
+            return resp.read(), None
+    except urllib.error.HTTPError as e:
+        return None, _format_http_error(e)
+    except urllib.error.URLError as e:
+        return None, f"urlerror:{getattr(e, 'reason', e)}"
+    except Exception as e:
+        return None, f"error:{e}"
+
+
 def http_get(url: str, accept: str = "application/json") -> Tuple[Optional[bytes], Optional[str]]:
-    """Fetch a URL. Returns (body_bytes, error_string).
+    """GET a URL. Returns (body_bytes, error_string).
 
     On error, the error string carries diagnostic context:
       - HTTP code (e.g. http_503)
@@ -57,29 +90,20 @@ def http_get(url: str, accept: str = "application/json") -> Tuple[Optional[bytes
     until we capture the body + headers.
     """
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": accept})
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
-            return resp.read(), None
-    except urllib.error.HTTPError as e:
-        try:
-            body_snippet = e.read().decode("utf-8", "replace")[:200]
-        except Exception:
-            body_snippet = ""
-        bits = [f"http_{e.code}"]
-        cf_ray = e.headers.get("cf-ray") or e.headers.get("CF-RAY") or ""
-        if cf_ray:
-            bits.append(f"cf-ray={cf_ray}")
-        server = e.headers.get("server") or ""
-        if server:
-            bits.append(f"server={server}")
-        if body_snippet:
-            clean = " ".join(body_snippet.split())[:120]
-            bits.append(f"body={clean!r}")
-        return None, " | ".join(bits)
-    except urllib.error.URLError as e:
-        return None, f"urlerror:{getattr(e, 'reason', e)}"
-    except Exception as e:
-        return None, f"error:{e}"
+    return _do_request(req)
+
+
+def http_post_json(url: str, payload: dict,
+                    accept: str = "application/json") -> Tuple[Optional[bytes], Optional[str]]:
+    """POST a JSON body, with the same diagnostic error capture as http_get.
+
+    Workday's CXS list endpoint requires POST — it's the only ATS here that
+    does, hence this lives alongside http_get rather than in the adapter.
+    """
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST", headers={
+        "User-Agent": USER_AGENT, "Content-Type": "application/json", "Accept": accept})
+    return _do_request(req)
 
 
 # === API endpoints (v3.1.0 + extensions in v3.1.1) ============================
@@ -130,6 +154,16 @@ PERSONIO_API  = "https://{slug}.jobs.personio.de/xml"
 # BambooHR's /careers/list returns {"result": [...], "meta": {"totalCount": N}}.
 # Each result is a minimal job summary; full body needs a separate /jobs/{id}.json call.
 BAMBOOHR_API  = "https://{slug}.bamboohr.com/careers/list"
+
+# Workday — the CXS (Candidate Experience Service) API. Unlike every other ATS
+# here, Workday has no single API host: each tenant lives on its own subdomain
+# plus datacenter pod (e.g. msd.wd5.myworkdayjobs.com — pod = wd5). Tenant, pod
+# and the careers-site path are not derivable from a company name, so a Workday
+# Favorite carries its full careers URL in careers_url and parse_workday_url
+# breaks it down. The list endpoint is a POST; pagination is offset-based.
+WORKDAY_CXS_LIST  = "https://{host}/wday/cxs/{tenant}/{site}/jobs"
+WORKDAY_PAGE_SIZE = 20    # Workday's CXS list caps a page at 20
+WORKDAY_MAX_PAGES = 25    # → 500 jobs/favorite — bounds a mega-tenant fetch
 
 
 # === Active-ID fetchers — one per supported ATS ===============================
@@ -375,6 +409,84 @@ def fetch_active_ids_bamboohr(slug: str, **_) -> Tuple[set, Optional[str]]:
     return {str(j.get("id")) for j in items if j.get("id")}, None
 
 
+_WORKDAY_HOST_RE = re.compile(
+    r'^https?://([a-z0-9-]+\.[a-z0-9]+\.myworkdayjobs\.com)(/.*)?$', re.I)
+_WORKDAY_LOCALE_RE = re.compile(r'^[a-z]{2}-[a-z]{2}$', re.I)
+
+
+def parse_workday_url(url: str) -> Optional[Tuple[str, str, str, str]]:
+    """Parse any myworkdayjobs.com URL into (host, tenant, site, external_path).
+
+    Works for both a bare careers URL and a single-job URL:
+      https://msd.wd5.myworkdayjobs.com/en-US/SearchJobs
+        -> ("msd.wd5.myworkdayjobs.com", "msd", "SearchJobs", "")
+      https://msd.wd5.myworkdayjobs.com/SearchJobs/job/USA-PA/Title_R1
+        -> ("msd.wd5.myworkdayjobs.com", "msd", "SearchJobs", "/job/USA-PA/Title_R1")
+
+    tenant is the first host label; site is the first path segment (after an
+    optional locale like en-US); external_path is whatever follows the site
+    ("" for a careers URL). Returns None for a non-Workday or site-less URL.
+    """
+    m = _WORKDAY_HOST_RE.match((url or "").strip())
+    if not m:
+        return None
+    host = m.group(1).lower()
+    tenant = host.split(".")[0]
+    segs = [s for s in (m.group(2) or "").split("/") if s]
+    if segs and _WORKDAY_LOCALE_RE.match(segs[0]):
+        segs = segs[1:]
+    if not segs:
+        return None
+    site = segs[0]
+    external_path = ("/" + "/".join(segs[1:])) if len(segs) > 1 else ""
+    return host, tenant, site, external_path
+
+
+def fetch_active_ids_workday(slug: str = "", careers_url: str = "",
+                             **_) -> Tuple[set, Optional[str]]:
+    """Workday CXS list endpoint — POST, offset-paginated WORKDAY_PAGE_SIZE/page.
+
+    Config rides in the Favorite's careers_url (the full myworkdayjobs.com URL);
+    parse_workday_url derives host / tenant / site. Returns the set of job
+    externalPaths: Workday's externalPath both uniquely identifies a posting
+    and composes directly into the public job URL and the CXS detail endpoint,
+    so it travels as our job id (cf. numeric ids elsewhere).
+
+    NOTE (v0.1.15): scaffolded against the documented CXS contract — Workday
+    was in a maintenance window at build time. Validate end-to-end (request
+    body, `total`/`jobPostings`/`externalPath` field names) once it is back.
+    """
+    parsed = parse_workday_url(careers_url)
+    if not parsed:
+        return set(), f"workday: careers_url is not a myworkdayjobs.com URL: {careers_url!r}"
+    host, tenant, site, _ = parsed
+    cxs_url = WORKDAY_CXS_LIST.format(host=host, tenant=tenant, site=site)
+    paths: set = set()
+    offset = 0
+    for _page in range(WORKDAY_MAX_PAGES):
+        body, err = http_post_json(cxs_url, {
+            "appliedFacets": {}, "limit": WORKDAY_PAGE_SIZE,
+            "offset": offset, "searchText": "",
+        })
+        if err:
+            return set(), err
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except Exception as e:
+            return set(), f"parse:{e}"
+        postings = data.get("jobPostings", [])
+        if not isinstance(postings, list):
+            return set(), "unexpected_shape"
+        for jp in postings:
+            ep = jp.get("externalPath")
+            if ep:
+                paths.add(ep)
+        offset += len(postings)
+        if not postings or offset >= data.get("total", 0):
+            break
+    return paths, None
+
+
 # === Adapter registry =========================================================
 
 # Each entry: ats_name -> {url_pattern, active_ids_fetcher, active_validate_supported}
@@ -444,6 +556,15 @@ ATS_ADAPTERS: dict = {
         # <slug>.bamboohr.com/jobs/view.php?id=<id> or /careers/<id>
         "url_pattern": re.compile(r'^https?://([a-z0-9-]+)\.bamboohr\.com/'),
         "active_ids_fetcher": fetch_active_ids_bamboohr,
+        "active_validate_supported": True,
+    },
+    "workday": {
+        # {tenant}.{pod}.myworkdayjobs.com/{site}[/job/...]. The capture group
+        # (tenant) exists only to satisfy ats_from_url's contract; the fetcher
+        # needs the full careers_url (passed via the Favorites source), which
+        # carries the pod + site that a bare URL match can't supply.
+        "url_pattern": re.compile(r'^https?://([a-z0-9-]+)\.[a-z0-9]+\.myworkdayjobs\.com/'),
+        "active_ids_fetcher": fetch_active_ids_workday,
         "active_validate_supported": True,
     },
     "scrape": {

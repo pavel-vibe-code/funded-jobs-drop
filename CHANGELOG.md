@@ -2,6 +2,20 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.15 — 2026-05-16
+
+Workday ATS adapter — unlocks the large enterprise tail (MSD, Adobe, Nvidia, Resideo and the long list of companies on Workday rather than a startup ATS). Favorites-only, like the other direct adapters.
+
+### Added
+- **Workday adapter (`workday`).** New entry in `ATS_ADAPTERS`. Workday is the odd one out: no single API host — each tenant lives on its own subdomain + datacenter pod (`msd.wd5.myworkdayjobs.com`). Since tenant/pod/site aren't derivable from a company name, a Workday Favorite carries its **full careers URL in `careers_url`** and `parse_workday_url()` decomposes it into `(host, tenant, site, external_path)`. `ats_slug` is optional for Workday (the Favorites guard was relaxed accordingly).
+  - **Discovery:** `fetch_active_ids_workday()` drives the CXS list endpoint — `POST /wday/cxs/{tenant}/{site}/jobs`, offset-paginated 20/page, capped at `WORKDAY_MAX_PAGES` (25 → 500 jobs/favorite). Returns each posting's `externalPath`, which doubles as the job id.
+  - **JD fetch:** `_fetch_workday_jd()` hits the CXS detail endpoint — `GET /wday/cxs/{tenant}/{site}{externalPath}` — and strips `jobPostingInfo.jobDescription` (HTML) to text.
+  - **`http_post_json()`** added alongside `http_get()` (shared error-diagnostic path via `_do_request()`) — Workday's list endpoint is the only ATS here that requires POST.
+- INSTALL.md egress allowlist now lists `*.myworkdayjobs.com` (covers every Workday pod).
+
+### ⚠️ Pending live validation
+Workday was in a scheduled maintenance window (`wd5` pod) when this shipped, so the CXS request/response contract is scaffolded from Workday's documented API, **not yet probed live**. Field names (`total`, `jobPostings[].externalPath`, `jobPostingInfo.jobDescription`) and the public-job-URL ↔ CXS-detail composition must be verified end-to-end against a live tenant before relying on Workday Favorites in production. Pure functions (`parse_workday_url`, canonical-URL construction) are unit-tested offline and correct.
+
 ## v0.1.14 — 2026-05-16
 
 Runs rows now self-identify their plugin version. Post-mortem on the v0.1.13 503 work surfaced the gap: two re-fires (19:29, 21:57) both pre-dated the v0.1.13 diagnostic commit (22:17), so the diagnostic never ran — and the only way to know that was cross-referencing git commit timestamps against run `started_at`. A version stamped into the log removes that guesswork.

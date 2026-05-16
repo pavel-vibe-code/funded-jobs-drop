@@ -55,7 +55,7 @@ Full setup including Cloud Routine scheduling → [INSTALL.md](./INSTALL.md).
 | **7 Consider-platform VCs** | ~1,400 companies | a16z, Sequoia, Greylock, Lightspeed, Bessemer, Kleiner Perkins, Balderton |
 | **5 Getro-platform VCs** | ~900 companies | Accel, General Catalyst, Atomico, Index, Insight Partners |
 | **AI-50 supplement** (opt-in) | 14 AI-leading companies | Cohere, Cognition, Crusoe, HeyGen, Krea, Listen Labs, OpenEvidence, Rogo, Runway, SambaNova, SSI, Surge AI, World Labs, Clay |
-| **Favorites** | unlimited | Pin individual companies via direct ATS adapters (Greenhouse, Ashby, Lever, TeamTailor, Comeet, Recruitee, Personio, BambooHR, SmartRecruiters, Workable, Homerun) |
+| **Favorites** | unlimited | Pin individual companies via direct ATS adapters (Greenhouse, Ashby, Lever, Workday, TeamTailor, Comeet, Recruitee, Personio, BambooHR, SmartRecruiters, Workable, Homerun) |
 
 Total addressable surface: ~2,300 unique portfolio companies. After deterministic prefilter (region / work mode / seniority / etc.), a typical fire surfaces 200–400 candidates → screener thins to 30–60 → scorer evaluates each in full → ~5–20 land in your Tracker as Strong/Decent/Stretch.
 

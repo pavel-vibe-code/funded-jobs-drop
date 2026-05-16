@@ -207,7 +207,7 @@ jobs.insightpartners.com
 | `jobs.lever.co` + `api.lever.co` | Lever JD fetch |
 | 7× `jobs.<vc>.com` etc. | Consider portfolio listing pages (1 per VC) — needed for CSRF bootstrap |
 | 5× Getro VC subdomains | Used as `Origin` header for `api.getro.com` requests (and as `Referer`) |
-| `*.teamtailor.com`, `*.homerun.co`, `*.comeet.com`, `api.smartrecruiters.com`, `*.workable.com`, `*.recruitee.com`, `*.personio.de/com`, `*.bamboohr.com` | Favorites adapters for non-Greenhouse/Ashby/Lever ATSes. Add only what your Favorites need; the 14 AI-50 seed entries are all Greenhouse/Ashby/Lever. |
+| `*.teamtailor.com`, `*.homerun.co`, `*.comeet.com`, `api.smartrecruiters.com`, `*.workable.com`, `*.recruitee.com`, `*.personio.de/com`, `*.bamboohr.com`, `*.myworkdayjobs.com` | Favorites adapters for non-Greenhouse/Ashby/Lever ATSes. Add only what your Favorites need; the 14 AI-50 seed entries are all Greenhouse/Ashby/Lever. `*.myworkdayjobs.com` covers every Workday tenant regardless of datacenter pod. |
 
 The page-scrape fallback (which recovers wiz.io / bolt.eu / scrive.com etc. via deterministic HTML cleaning) needs arbitrary outbound HTTPS — not listable here. Those will fail under restricted egress; affected rows land as `Status: jd_fetch_failed` for manual review. That's an acceptable degradation — the deterministic-ATS path covers ~80% of jobs out of the box, and `/fd-rescore failed` can later pick up the rest if you ever loosen egress.
 
