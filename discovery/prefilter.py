@@ -324,6 +324,31 @@ def location_in_variant_region(location_text: str,
     return country.lower() in allowed
 
 
+def pick_in_region_location(locations: list[str], profile: Profile) -> str:
+    """From a job's location strings, return the one most favorable to the
+    candidate: a home-country location if any, else any in-variant-region
+    location, else the first.
+
+    A multi-location job (Workday lists the extras as additionalLocations)
+    must be judged on its *best* reachable location — not on whichever the
+    ATS happens to call primary. A Director role open in both New Jersey and
+    Prague is, for a Czechia-based candidate, a Prague job.
+    """
+    locs = [l for l in locations if l and l.strip()]
+    if not locs:
+        return ""
+    home = (profile.home_country or "").lower()
+    if home:
+        for loc in locs:
+            c = _country_from_text(loc.lower())
+            if c and (c.lower() == home or _COUNTRY_ALIASES.get(c.lower()) == home):
+                return loc
+    for loc in locs:
+        if location_in_variant_region(loc, profile) is True:
+            return loc
+    return locs[0]
+
+
 def _same_country(extracted: str, home: str) -> bool:
     """Check two country strings refer to the same place, handling aliases."""
     e, h = extracted.lower(), home.lower()

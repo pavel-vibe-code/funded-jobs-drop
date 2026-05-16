@@ -280,7 +280,7 @@ def jd_fetch_stage(run_id: str) -> dict:
     so non-CZ hybrid/onsite Favorites are dropped before the expensive Pass B,
     matching the same checks VC candidates went through at discovery.
     """
-    from discovery.prefilter import apply as apply_prefilter
+    from discovery.prefilter import apply as apply_prefilter, pick_in_region_location
     from state.profile import Profile
 
     wd = _work_dir(run_id)
@@ -349,7 +349,12 @@ def jd_fetch_stage(run_id: str) -> dict:
             if jd_meta.get("title") and not cand.get("title"):
                 enriched["title"] = jd_meta["title"]
             if jd_meta.get("location") and not (cand.get("raw_location") or [None])[0]:
-                enriched["raw_location"] = [jd_meta["location"]]
+                # Multi-location jobs (Workday additionalLocations) are judged
+                # on their best reachable location, not the ATS's "primary".
+                all_locs = [jd_meta["location"]] + (jd_meta.get("additional_locations") or [])
+                enriched["raw_location"] = [
+                    pick_in_region_location(all_locs, profile_for_filter)
+                ]
             if jd_meta.get("work_mode") and cand.get("work_mode") == "on_site":
                 enriched["work_mode"] = jd_meta["work_mode"]
             if jd_meta.get("salary_disclosed") and not cand.get("salary_disclosed"):

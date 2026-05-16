@@ -2,6 +2,14 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.18 — 2026-05-16
+
+Multi-location Workday jobs were judged on the wrong location.
+
+### Fixed
+- **`_fetch_workday_jd` discarded `additionalLocations`.** Workday's CXS detail returns only a *primary* `location`; a multi-site req carries the rest in `additionalLocations`. A req open in both New Jersey and Prague therefore looked NJ-only, and the post-JD region/relocation filter (S1a/S3) dropped it for an EU-variant profile — silently killing on-region roles. `_fetch_workday_jd` now surfaces `additional_locations`, and `jd_fetch_stage` resolves a favorite's location through the new `pick_in_region_location()`: a home-country location if the job has one, else any in-variant-region location, else the primary.
+- Verified live on MSD `R397846` (Director, GAHM IT Strategy & Execution — NJ + Prague): pre-fix it resolved to "USA - New Jersey" and was dropped; post-fix it resolves to "CZE - Prague" and survives the post-JD filter.
+
 ## v0.1.17 — 2026-05-16
 
 Workday favorites are region-filtered *before* the per-job JD fetch. Workday mega-tenants (MSD, Nvidia, Adobe) carry ~500 jobs each, mostly outside an EU/US-scoped profile's region — previously every one got auto-promoted and JD-fetched, then dropped post-JD. Now the obviously-out-of-region ones are dropped on a location string already in hand.

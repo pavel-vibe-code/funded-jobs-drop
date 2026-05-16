@@ -431,6 +431,11 @@ def _fetch_workday_jd(url: str) -> tuple[str, dict, Optional[str]]:
         meta["title"] = info["title"]
     if info.get("location"):
         meta["location"] = info["location"]
+    # Multi-location reqs: `location` is only the primary. `additionalLocations`
+    # carries the rest — without it a job open in NJ *and* Prague looks NJ-only.
+    extra = info.get("additionalLocations")
+    if isinstance(extra, list) and extra:
+        meta["additional_locations"] = [str(x) for x in extra if x]
     remote = (info.get("remoteType") or "").lower()
     if remote:
         meta["work_mode"] = ("remote" if "remote" in remote
