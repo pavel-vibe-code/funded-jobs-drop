@@ -2,6 +2,17 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.16 — 2026-05-16
+
+Workday adapter validated end-to-end against the live CXS API (the wd5 pod returned from maintenance). One pagination bug found and fixed.
+
+### Fixed
+- **`fetch_active_ids_workday` stopped after 2 pages for large tenants.** Workday's CXS `total` field is accurate only on the *first* page — it returns `0` on every page after. The v0.1.15 loop's `offset >= total` termination check therefore fired on page 2 (`40 >= 0`), silently capping Nvidia and Adobe at 40 jobs each. (MSD escaped only by hitting the 25-page cap first.) Termination now keys off a short page — `len(postings) < WORKDAY_PAGE_SIZE` — and never consults `total`. Re-verified: MSD/Nvidia/Adobe each return the full 500-job cap; JD fetch resolves title/location/work_mode.
+
+### Validated
+- CXS list + detail contract confirmed live: `total`, `jobPostings[].externalPath`, `jobPostingInfo.{jobDescription,title,location,remoteType}` — all exactly as scaffolded in v0.1.15. No other drift.
+- Large Workday favorites are capped at 500 jobs (`WORKDAY_MAX_PAGES` × `WORKDAY_PAGE_SIZE` = 25 × 20). MSD has ~823 open reqs, Nvidia ~2000, Adobe ~1178 — the cap trades completeness for a bounded ~25 list calls/favorite.
+
 ## v0.1.15 — 2026-05-16
 
 Workday ATS adapter — unlocks the large enterprise tail (MSD, Adobe, Nvidia, Resideo and the long list of companies on Workday rather than a startup ATS). Favorites-only, like the other direct adapters.

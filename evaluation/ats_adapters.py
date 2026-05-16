@@ -452,9 +452,10 @@ def fetch_active_ids_workday(slug: str = "", careers_url: str = "",
     and composes directly into the public job URL and the CXS detail endpoint,
     so it travels as our job id (cf. numeric ids elsewhere).
 
-    NOTE (v0.1.15): scaffolded against the documented CXS contract — Workday
-    was in a maintenance window at build time. Validate end-to-end (request
-    body, `total`/`jobPostings`/`externalPath` field names) once it is back.
+    Pagination quirk (validated live, v0.1.16): Workday's `total` field is
+    accurate only on the first page — it collapses to 0 on every page after —
+    so the loop terminates on a short page (len < WORKDAY_PAGE_SIZE), never on
+    `total`. WORKDAY_MAX_PAGES still bounds mega-tenants (MSD ~823, Nvidia 2k).
     """
     parsed = parse_workday_url(careers_url)
     if not parsed:
@@ -482,7 +483,9 @@ def fetch_active_ids_workday(slug: str = "", careers_url: str = "",
             if ep:
                 paths.add(ep)
         offset += len(postings)
-        if not postings or offset >= data.get("total", 0):
+        # A page shorter than the limit is the last one. `total` is unreliable
+        # past page 1 (Workday returns 0), so it must not gate termination.
+        if len(postings) < WORKDAY_PAGE_SIZE:
             break
     return paths, None
 
