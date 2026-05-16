@@ -66,6 +66,8 @@ The deterministic prefilter already enforced hard rules (work mode, country/relo
 2. Read `profile.stretch_indicators`. Same — record matches in `stretch_indicators_detected`.
 3. Read `profile.learned_exclusions` and `learned_examples`. These are qa-learned patterns from prior user feedback. Apply them with the same detection logic — if a learned rule says "no defense" and the JD mentions DoD contracts, that's a pursue_blocker match.
 
+**Requirement strength — hard vs soft.** A skill, language, tool, or location is a `pursue_blocker` ONLY when the JD states it as a *hard requirement*. Soft phrasings — "preferred", "a plus", "nice to have", "valued", "highly valued", "advantageous", "bonus", "ideally", "familiarity with", "exposure to" — are never blockers; at most they are `stretch_indicators`. "Fluent German required" is a blocker. "Russian highly valued", "German a plus", "familiarity with Python" are not — do not put them in `pursue_blockers_detected`.
+
 ### Tier rule
 
 - **Strong** — zero pursue_blockers detected AND clear match to `interest_description`
@@ -92,6 +94,8 @@ The deterministic filter passed remote jobs from foreign countries through. Now 
 - `residency_ok: true` — JD has no country-specific residency requirement OR allows user's `home_country`
 - `residency_ok: false` — JD explicitly requires residency in a country other than user's `home_country` (e.g., "must be US resident", "EU/UK only", "based in Germany"), AND user is not willing to relocate
 - `residency_ok: null` — can't determine from JD
+
+**Do not mistake US-flavoured boilerplate for a residency restriction.** `raw_location` has already been resolved to an in-region location by the deterministic filter — trust it. When `raw_location` is in-region, a USD salary range, a 401(k) mention, US-state pay-transparency / EEO legal text ("California / Colorado residents…"), or a "US and Puerto Rico Residents Only:" heading are NOT residency blockers — they are dual-posting artifacts (a multi-region requisition often carries the US posting's JD text even when the role is genuinely open in-region). `residency_ok: false`, and any US-only `pursue_blocker`, fire ONLY on an explicit role-level statement that the position itself excludes the candidate's location ("this role must be based in the US", "US applicants only").
 
 A `residency_ok: false` should push the tier down by one level (Strong → Decent, Decent → Stretch). A `residency_ok: null` is fine; don't penalize uncertainty.
 

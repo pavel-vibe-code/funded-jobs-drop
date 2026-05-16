@@ -2,6 +2,16 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.1.19 — 2026-05-16
+
+Hardened `scorer.md` (Pass B) against two failure modes surfaced by a 3-model (Opus/Sonnet/Haiku) scoring comparison on a 19-job borderline test set.
+
+### Changed
+- **Requirement strength — hard vs soft.** The scorer now treats a skill / language / location as a `pursue_blocker` only when the JD states it as a *hard requirement*. Soft phrasings ("preferred", "a plus", "valued", "highly valued", "nice to have", "familiarity with", …) are explicitly not blockers — at most `stretch_indicators`. Sonnet had dropped a Customer Success role reading "Russian highly valued" as a hard language requirement.
+- **US-flavoured boilerplate is not a residency blocker.** When the candidate's `raw_location` is already in-region (the deterministic filter resolved it — see v0.1.18), the scorer must not fire a US-only / residency blocker on dual-posting artifacts: USD salary ranges, 401(k) mentions, US-state pay-transparency/EEO legal text, or the "US and Puerto Rico Residents Only:" accommodation heading. A residency blocker fires only on an explicit role-level location restriction. Sonnet had dropped the MSD Director-in-Prague role (R397846) on exactly this boilerplate.
+
+Comparison takeaway recorded for reference: Haiku is unsafe as a Pass-B scorer (2 catastrophic mis-scores in 19 — a hard-coding role rated Strong, an on-profile FDE dropped); Opus stays the scorer. The prompt hardening above is model-agnostic.
+
 ## v0.1.18 — 2026-05-16
 
 Multi-location Workday jobs were judged on the wrong location.
