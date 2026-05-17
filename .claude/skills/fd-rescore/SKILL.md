@@ -1,6 +1,6 @@
 ---
 name: fd-rescore
-description: Re-evaluate (Pass B only) existing Tracker rows in-place against the current Profile. Three modes — `failed` (retry jd_fetch_failed rows after adapter fixes), `stale` (rows whose profile_hash drifted, e.g. after /fd-settings edits), `flagged` (rows where Match quality is Wrong fit / Great match — closes the /fd-recycle-feedback loop).
+description: Re-evaluate (Pass B only) existing Tracker rows in-place against the current Profile. Three modes — `failed` (retry jd_fetch_failed rows after adapter fixes), `stale` (rows whose profile_hash drifted, e.g. after /fd-settings edits), `flagged` (rows you flagged — Match quality ≠ OK — closes the /fd-recycle-feedback loop).
 ---
 
 # /fd-rescore — Pass B re-evaluation
@@ -17,7 +17,7 @@ Modes and behaviour:
 |---|---|---|
 | `failed` | `Status == jd_fetch_failed` rows | **yes** (these never got a real verdict before) |
 | `stale` | rows where `profile_hash_at_eval != current profile.profile_hash` | no |
-| `flagged` | rows where `Match quality ∈ {Wrong fit, Great match}` | no |
+| `flagged` | rows where `Match quality ≠ OK` (the rows you flagged) | no |
 
 The user picks the mode. If they say "rescore the failed ones" → `failed`. "I changed my profile" → `stale`. "Re-check the ones I flagged" → `flagged`. If unclear, ask **one** short question and pick the mode they want.
 

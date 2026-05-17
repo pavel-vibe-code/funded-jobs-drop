@@ -183,7 +183,7 @@ def read_rows_for_rescore(mode: str, current_profile_hash: str = "") -> list[dic
     Modes:
       "failed"  → Status == jd_fetch_failed
       "stale"   → profile_hash_at_eval != current_profile_hash
-      "flagged" → Match quality in {Wrong fit, Great match}
+      "flagged" → Match quality != OK (rows the user flagged with feedback)
 
     Returns rich dicts (not TrackerRow) with the fields rescore needs:
     page_id, canonical_url, title, company, location, seniority, vc_source,
@@ -211,16 +211,19 @@ def read_rows_for_rescore(mode: str, current_profile_hash: str = "") -> list[dic
             ],
         }
     elif mode == "flagged":
+        # "Flagged" = the user set Match quality off its "OK" default — the
+        # same signal /fd-recycle-feedback learns from. Match quality only ever
+        # has OK / Feedback, so != OK means == Feedback. Skip Closed postings
+        # and rows the learning loop already archived: re-scoring an actioned
+        # row just burns an Opus call.
         notion_filter = {
             "and": [
                 {"property": "Status",
                  "select": {"does_not_equal": "Closed"}},
-                {"or": [
-                    {"property": "Match quality",
-                     "select": {"equals": "Wrong fit"}},
-                    {"property": "Match quality",
-                     "select": {"equals": "Great match"}},
-                ]},
+                {"property": "Status",
+                 "select": {"does_not_equal": DROPPED_FEEDBACK_STATUS}},
+                {"property": "Match quality",
+                 "select": {"does_not_equal": "OK"}},
             ],
         }
     else:
