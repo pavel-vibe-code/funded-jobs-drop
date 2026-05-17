@@ -346,8 +346,9 @@ def fetch_active_ids_workable(slug: str, **_) -> Tuple[set, Optional[str]]:
 def fetch_active_ids_recruitee(slug: str, **_) -> Tuple[set, Optional[str]]:
     """Recruitee public offers API at {slug}.recruitee.com/api/offers/.
 
-    Response: {"offers": [{id, slug, title, ...}, ...]}. Recruitee uses
-    numeric `id` plus a string `slug`; we key on `id` since it's stable.
+    Response: {"offers": [{id, slug, title, ...}, ...]}. The public job page
+    is {slug}.recruitee.com/o/<offer-slug> — key on the string `slug`, not the
+    numeric `id`: the /o/ route resolves slugs only and 404s on a bare id.
     """
     data, err = http_get(RECRUITEE_API.format(slug=slug))
     if err:
@@ -359,7 +360,7 @@ def fetch_active_ids_recruitee(slug: str, **_) -> Tuple[set, Optional[str]]:
     items = body.get("offers", []) if isinstance(body, dict) else body
     if not isinstance(items, list):
         return set(), "unexpected_shape"
-    return {str(j.get("id")) for j in items if j.get("id")}, None
+    return {str(j.get("slug")) for j in items if j.get("slug")}, None
 
 
 def fetch_active_ids_personio(slug: str, **_) -> Tuple[set, Optional[str]]:

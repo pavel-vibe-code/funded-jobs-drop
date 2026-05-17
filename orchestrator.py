@@ -552,16 +552,24 @@ def write_stage(run_id: str) -> dict:
         elif tier_norm == "Decent — Consider":
             consider_samples.append({"title": verdict["title"], "company": verdict["company"]})
 
-    # JD-fetch failures get a row with status=jd_fetch_failed
+    # JD-fetch failures. Favorites bypass Pass A at discovery, so a Favorite
+    # with no JD has been through zero evaluation — a raw unfiltered entry, not
+    # a candidate; skip it (re-discovered next fire). VC-source failures cleared
+    # Pass A on structured tags, so they're kept as jd_fetch_failed rows for
+    # /fd-rescore retry — but with an empty Match: no JD means no Pass B tier,
+    # and "Decent — Consider" on an unscored row is a lie.
+    failure_verdicts: list[dict] = []
     for fail in failures:
-        verdict = _build_verdict(
-            fail, fail["canonical_url"], "Decent — Consider",
+        if fail.get("source_platform") == "Favorites":
+            continue
+        failure_verdicts.append(_build_verdict(
+            fail, fail["canonical_url"], "",
             {"reasoning": f"JD fetch failed: {fail.get('_jd_fetch_error', 'unknown')}",
              "pursue_blockers_detected": [], "stretch_indicators_detected": [],
              "residency_ok": None},
             now_iso, profile_hash, run_id, status="jd_fetch_failed",
-        )
-        verdicts.append(verdict)
+        ))
+    verdicts.extend(failure_verdicts)
 
     try:
         write_result = write_evaluated(verdicts)
@@ -579,9 +587,9 @@ def write_stage(run_id: str) -> dict:
             "started_at_iso":        dmetrics.get("started_at_iso", now_iso),
             "discovery_total":       dmetrics.get("discovery_total", 0),
             "after_prefilter":       dmetrics.get("after_prefilter", 0),
-            "pass_a_evaluated":      len(verdicts) - len(failures),
-            "pass_a_kept":           len(verdicts) - len(failures),
-            "pass_b_scored":         len(verdicts) - len(failures),
+            "pass_a_evaluated":      len(verdicts) - len(failure_verdicts),
+            "pass_a_kept":           len(verdicts) - len(failure_verdicts),
+            "pass_b_scored":         len(verdicts) - len(failure_verdicts),
             "pursue_count":          len(pursue_samples),
             "consider_count":        len(consider_samples),
             "skim_count":            sum(1 for v in verdicts if v["match"] == "Stretch — Skim"),
@@ -727,6 +735,9 @@ def _build_jsonl_log(wd: Path, verdicts: list[dict]) -> str:
             tier: sum(1 for v in verdicts if v.get("match") == tier)
             for tier in ("Strong — Pursue", "Decent — Consider", "Stretch — Skim")
         },
+        "jd_fetch_failed_rows": sum(
+            1 for v in verdicts if v.get("status") == "jd_fetch_failed"
+        ),
         "pursue_titles": [
             v.get("title") for v in verdicts
             if v.get("match") == "Strong — Pursue"
@@ -1060,11 +1071,12 @@ def rescore_apply(run_id: str, mode: str = "failed") -> dict:
         except Exception as e:
             print(f"  warn: update_evaluated failed for {row.get('canonical_url')}: {e}")
 
-    # Refresh status on rows whose JD fetch is still broken
+    # Refresh status on rows whose JD fetch is still broken. Empty Match —
+    # an unscored row has no Pass B tier (mirrors write_stage).
     for fail in still_failed:
         try:
             update_evaluated(fail["page_id"], {
-                "match":                       "Decent — Consider",
+                "match":                       "",
                 "why_fits":                    f"JD fetch still failing after rescore: {fail.get('_jd_fetch_error','?')}",
                 "status":                      "jd_fetch_failed",
                 "pass_b_residency_ok":         False,
