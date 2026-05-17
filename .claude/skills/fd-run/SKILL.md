@@ -60,7 +60,7 @@ Fetches candidates from all sources, dedups, applies deterministic prefilter S2�
 Count batches:
 
 ```bash
-ls /tmp/fd-run/<RUN_ID>/candidates-batch-*.json 2>/dev/null | wc -l
+python3 -c "import glob; print(len(glob.glob('/tmp/fd-run/<RUN_ID>/candidates-batch-*.json')))"
 ```
 
 - Result `0` → no candidates this fire. Skip directly to **Step 7 (finalize)**.
@@ -77,7 +77,7 @@ For each `candidates-batch-{N}.json`, dispatch the `screener` agent. Cap paralle
 After all waves return, verify count:
 
 ```bash
-ls /tmp/fd-run/<RUN_ID>/screener-verdicts-*.json 2>/dev/null | wc -l
+python3 -c "import glob; print(len(glob.glob('/tmp/fd-run/<RUN_ID>/screener-verdicts-*.json')))"
 ```
 
 If less than the batch count, re-dispatch just the missing batches **once**. Then proceed regardless of whether the retry completed all — `aggregate` will work on whatever verdict files exist; missing ones are treated as "drop" (candidate not in survivors).
@@ -99,7 +99,7 @@ Source-aware fetch — Getro detail page first, ATS adapter fallback for Conside
 Count scorer inputs:
 
 ```bash
-ls /tmp/fd-run/<RUN_ID>/scorer-input-*.json 2>/dev/null | wc -l
+python3 -c "import glob; print(len(glob.glob('/tmp/fd-run/<RUN_ID>/scorer-input-*.json')))"
 ```
 
 - Result `0` → no JDs fetched. Skip to **Step 5b (write)** — the failures still get written to Tracker as `jd_fetch_failed`.
@@ -112,7 +112,7 @@ Favorites bypassed Pass A at discovery because they had no structured tags. JD f
 Count the post-JD batches:
 
 ```bash
-ls /tmp/fd-run/<RUN_ID>/favorites-postjd-batch-*.json 2>/dev/null | wc -l
+python3 -c "import glob; print(len(glob.glob('/tmp/fd-run/<RUN_ID>/favorites-postjd-batch-*.json')))"
 ```
 
 If `0` → skip to Step 5.
@@ -126,7 +126,7 @@ For each `favorites-postjd-batch-{N}.json`, dispatch the `screener` agent (same 
 After all waves return, verify count:
 
 ```bash
-ls /tmp/fd-run/<RUN_ID>/postjd-verdicts-*.json 2>/dev/null | wc -l
+python3 -c "import glob; print(len(glob.glob('/tmp/fd-run/<RUN_ID>/postjd-verdicts-*.json')))"
 ```
 
 Re-dispatch missing ones once. Then apply:
@@ -148,7 +148,7 @@ For each `scorer-input-{idx}.json`, dispatch the `scorer` agent. WAVE_SIZE=8.
 After all waves return, verify count:
 
 ```bash
-ls /tmp/fd-run/<RUN_ID>/scorer-output-*.json 2>/dev/null | wc -l
+python3 -c "import glob; print(len(glob.glob('/tmp/fd-run/<RUN_ID>/scorer-output-*.json')))"
 ```
 
 Re-dispatch missing ones once, then proceed regardless.
@@ -179,11 +179,7 @@ Writes the Runs row to Notion. POSTs the webhook if the user has Pursue rows AND
 
 ## Step 8 — Report
 
-Display `/tmp/fd-run/<RUN_ID>/finalize-result.json`. In manual mode the user reads it; in routine mode it lands in the run log.
-
-```bash
-cat /tmp/fd-run/<RUN_ID>/finalize-result.json
-```
+Read `/tmp/fd-run/<RUN_ID>/finalize-result.json` with the **Read tool** and display its contents. In manual mode the user reads it; in routine mode it lands in the run log.
 
 ## Routine permissions (informational)
 
@@ -192,13 +188,11 @@ The routine plugin must auto-allow these tool patterns for the fire to run unatt
 - `Bash(python3 -m orchestrator *)`
 - `Bash(python3 -m recycle_feedback *)`
 - `Bash(python3 -c *)`
-- `Bash(ls /tmp/fd-run/*)`
-- `Bash(cat /tmp/fd-run/*)`
 - `Agent(qa)`, `Agent(screener)`, `Agent(scorer)`, `Agent(summarize)`
 - `Read(/tmp/fd-run/**)`, `Write(/tmp/fd-run/**)`
 - `Read(/tmp/fd-recycle/**)`, `Write(/tmp/fd-recycle/**)`
 
-If any of these prompt for permission at fire time, the routine setup is incomplete.
+Every Bash call in this skill is now a single `python3` invocation — no pipes, no `ls`/`cat` — so each maps cleanly to one of the three `Bash(python3 ...)` rules. The file `.claude/settings.json` (checked into the repo) carries exactly this allowlist. If any pattern prompts for permission at fire time, the routine setup is incomplete.
 
 ## Dry-run mode
 

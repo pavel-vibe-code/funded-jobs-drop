@@ -4,8 +4,6 @@
       "Bash(python3 -m orchestrator *)",
       "Bash(python3 -m recycle_feedback *)",
       "Bash(python3 -c *)",
-      "Bash(ls /tmp/fd-run/*)",
-      "Bash(cat /tmp/fd-run/*)",
       "Agent(qa)",
       "Agent(screener)",
       "Agent(scorer)",

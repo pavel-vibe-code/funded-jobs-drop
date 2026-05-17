@@ -43,7 +43,7 @@ Reads matching Tracker rows, fetches fresh JDs for each, writes:
 Count scorer inputs:
 
 ```bash
-ls /tmp/fd-run/<RUN_ID>/scorer-input-*.json 2>/dev/null | wc -l
+python3 -c "import glob; print(len(glob.glob('/tmp/fd-run/<RUN_ID>/scorer-input-*.json')))"
 ```
 
 - `0` → no JDs fetched. Skip to **Step 3 (apply)** so the still-failing rows get their status refreshed, then finalize.
@@ -60,7 +60,7 @@ For each `scorer-input-<idx>.json`, dispatch the `scorer` agent. Cap at **8 per 
 After all waves return, verify count:
 
 ```bash
-ls /tmp/fd-run/<RUN_ID>/scorer-output-*.json 2>/dev/null | wc -l
+python3 -c "import glob; print(len(glob.glob('/tmp/fd-run/<RUN_ID>/scorer-output-*.json')))"
 ```
 
 Re-dispatch missing ones once. Then proceed regardless.
@@ -91,16 +91,11 @@ Creates the Runs row. Webhook fires only if `webhook-verdicts.json` has Strong r
 
 ## Step 6 — Report
 
-```bash
-cat /tmp/fd-run/<RUN_ID>/finalize-result.json
-```
+Read `/tmp/fd-run/<RUN_ID>/finalize-result.json` with the **Read tool** and display its contents.
 
 ## Routine permissions (informational)
 
-Same allowlist as `/fd-run` plus:
-
-- `Bash(python3 -m orchestrator rescore_select *)`
-- `Bash(python3 -m orchestrator rescore_apply *)`
+Identical to `/fd-run` — no additional rules. The `rescore_select` / `rescore_apply` selectors run as `python3 -m orchestrator rescore_select|rescore_apply …`, already covered by `Bash(python3 -m orchestrator *)`. Every Bash call in this skill is a single `python3` invocation — no pipes, no `ls`/`cat`. The repo's `.claude/settings.json` carries the full allowlist.
 
 ## Dry-run mode
 

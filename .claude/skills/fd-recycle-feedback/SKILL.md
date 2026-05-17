@@ -54,7 +54,9 @@ Does two things:
 Print the rationale (from `qa-output.json`) so the user knows what changed:
 
 ```bash
-python3 -c "import json; d = json.load(open('/tmp/fd-recycle/<RUN_ID>/qa-output.json')); print(d.get('rationale', '(no rationale)'))" 2>/dev/null || echo "(qa-output missing)"
+python3 -c "import json
+try: print(json.load(open('/tmp/fd-recycle/<RUN_ID>/qa-output.json')).get('rationale', '(no rationale)'))
+except Exception: print('(qa-output missing)')"
 ```
 
 ## Routine permissions (informational)
@@ -65,6 +67,8 @@ If this skill is wired into a scheduled routine, the allowlist must include:
 - `Bash(python3 -c *)`
 - `Agent(qa)`
 - `Read(/tmp/fd-recycle/**)`, `Write(/tmp/fd-recycle/**)`
+
+All of these are in the repo's `.claude/settings.json`. Every Bash call in this skill is a single `python3` invocation — no pipes, no `||`, no `ls`/`cat`.
 
 ## Dry-run mode
 
