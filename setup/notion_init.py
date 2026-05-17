@@ -63,6 +63,7 @@ def _tracker_properties() -> dict:
             ("Closed",              "default"),
             ("jd_fetch_failed",     "orange"),
             ("dropped_by_pass_a",   "default"),
+            ("Dropped (feedback)",  "brown"),
         ]),
         "Match quality": _select([
             ("OK",       "default"),
@@ -294,6 +295,31 @@ def validate_or_patch(client: NotionClient, db_ids: dict[str, str]) -> dict[str,
                 ds_id, {p: target_props[p] for p in missing}
             )
             applied.extend(missing)
+
+        # Reconcile select / multi_select options on already-existing
+        # properties. The missing-columns patch above only adds whole columns,
+        # so an option added to the code schema after a DB was created (e.g.
+        # the "Dropped (feedback)" Status value the learning loop writes) never
+        # lands without this. Additive only — the user's own custom options
+        # are preserved untouched; Notion deletes options omitted from the
+        # array, so each patch sends current + new.
+        opts_patch: dict = {}
+        for p, spec in target_props.items():
+            if p not in current or not isinstance(spec, dict):
+                continue
+            kind = ("select" if "select" in spec
+                    else "multi_select" if "multi_select" in spec else None)
+            if not kind:
+                continue
+            cur_opts = current[p].get(kind, {}).get("options", [])
+            cur_names = {o["name"] for o in cur_opts}
+            new_opts = [o for o in spec[kind]["options"]
+                        if o["name"] not in cur_names]
+            if new_opts:
+                opts_patch[p] = {kind: {"options": cur_opts + new_opts}}
+                applied.append(f"{p} +options {[o['name'] for o in new_opts]}")
+        if opts_patch:
+            client.patch_data_source_properties(ds_id, opts_patch)
 
         if applied:
             patches[name] = applied
