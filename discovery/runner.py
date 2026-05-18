@@ -69,10 +69,15 @@ def run(profile: Profile,
     # surfaces per-source failures (don't silently swallow Getro 403s etc.).
     all_jobs: list[DiscoveredJob] = []
     source_errors: list[str] = []
-    for src_fn in (consider.fetch, getro.fetch, favorites.fetch):
+    for src_fn in (consider.fetch, getro.fetch):
         jobs, errs = src_fn(profile, since_epoch)
         all_jobs.extend(jobs)
         source_errors.extend(errs)
+    # Favorites additionally report how many jobs their pre-discovery region
+    # filter dropped — threaded into discovery-metrics for the Runs jsonl_log.
+    fav_jobs, fav_errs, fav_region_dropped = favorites.fetch(profile, since_epoch)
+    all_jobs.extend(fav_jobs)
+    source_errors.extend(fav_errs)
     discovery_total = len(all_jobs)
 
     # 1b. Per-source URL sets — used by closure detection downstream.
@@ -106,6 +111,7 @@ def run(profile: Profile,
         # per_source_urls is consumed by orchestrator for closure detection;
         # convert to sorted lists for JSON serialization upstream.
         "per_source_urls": {src: sorted(urls) for src, urls in per_source_urls.items()},
+        "favorites_region_dropped": fav_region_dropped,
         "source_errors": source_errors,
     }
     return survivors, metrics

@@ -423,8 +423,11 @@ def apply(jobs: list[DiscoveredJob],
                 counts["s1a_variant_region"] += 1
                 continue
 
-        # S2: work mode acceptance
-        if accepted_modes and j.work_mode not in accepted_modes:
+        # S2: work mode acceptance. A job with work_mode "unknown" (a Favorite
+        # whose ATS listing gave no work-mode signal) is never hard-dropped
+        # here — Pass B reads the JD and judges it.
+        if (accepted_modes and j.work_mode != "unknown"
+                and j.work_mode not in accepted_modes):
             counts["s2_work_mode"] += 1
             continue
 
@@ -436,8 +439,12 @@ def apply(jobs: list[DiscoveredJob],
                 if not profile.search_outside_home:
                     counts["s3_country_relocation"] += 1
                     continue
-                if not profile.willing_to_relocate and j.work_mode != "remote":
-                    # Not relocating + not remote → can't take this job
+                if (not profile.willing_to_relocate
+                        and j.work_mode not in ("remote", "unknown")):
+                    # Not relocating + not remote → can't take this job.
+                    # "unknown" (a Favorite with no work-mode signal in its
+                    # ATS listing) falls through — Pass B reads the JD and
+                    # judges remote eligibility + residency.
                     counts["s3_country_relocation"] += 1
                     continue
                 # Remote in another country (still within variant region):

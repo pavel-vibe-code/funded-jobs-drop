@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Literal, Optional, Protocol
 
 
-WorkMode = Literal["remote", "hybrid", "on_site"]
+WorkMode = Literal["remote", "hybrid", "on_site", "unknown"]
 Region = Literal["EU", "US", "UK_IE", "GLOBAL_REMOTE", "OTHER"]
 Seniority = Literal["entry", "mid", "senior", "staff", "principal", "executive"]
 SourcePlatform = Literal["Consider", "Getro", "Favorites"]

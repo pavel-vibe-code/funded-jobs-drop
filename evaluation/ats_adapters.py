@@ -588,11 +588,14 @@ def _greenhouse_listing(slug: str = "", **_) -> Tuple[Optional[list], Optional[s
         for j in jobs:
             if not j.get("id"):
                 continue
+            loc = (j.get("location") or {}).get("name", "") or ""
             out.append({
                 "source_job_id": str(j["id"]),
                 "title":     j.get("title", "") or "",
-                "location":  (j.get("location") or {}).get("name", "") or "",
-                "work_mode": None,   # greenhouse listing carries no work-mode flag
+                "location":  loc,
+                # Greenhouse has no work-mode field — the location string is
+                # the only signal ("Berlin - Remote" etc.); None when silent.
+                "work_mode": _norm_work_mode(loc),
                 "jd_text":   _strip_html(j.get("content", "") or ""),
             })
         return out, None

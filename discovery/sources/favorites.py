@@ -61,6 +61,10 @@ def _convert(record: dict, favorite_name: str, favorite_slug: str,
     Lever), else None — the JD-fetch stage fetches it per-job in that case.
     A sparse record (only source_job_id, from the active-id fallback) is fine:
     every other field defaults.
+
+    work_mode falls back to "unknown" — NOT "on_site" — when the listing gave
+    no signal: the prefilter must not drop an unknown-mode job on the
+    relocation rule (it could be remote); Pass B reads the JD and judges.
     """
     canonical_url = _construct_url(
         ats_type, favorite_slug, record["source_job_id"], careers_url)
@@ -71,7 +75,7 @@ def _convert(record: dict, favorite_name: str, favorite_slug: str,
         company_name=favorite_name,
         company_slug=favorite_slug,
         raw_location=[location] if location else [],
-        work_mode=record.get("work_mode") or "on_site",
+        work_mode=record.get("work_mode") or "unknown",
         posted_at=datetime.now(timezone.utc),  # ATS listings rarely date-stamp reliably
         source_platform="Favorites",
         raw={},
@@ -83,11 +87,13 @@ def _convert(record: dict, favorite_name: str, favorite_slug: str,
     )
 
 
-def fetch(profile: Profile, since_epoch: int) -> tuple[list[DiscoveredJob], list[str]]:
+def fetch(profile: Profile,
+          since_epoch: int) -> tuple[list[DiscoveredJob], list[str], int]:
     """Fetch active jobs for every active Favorite via its ATS adapter.
 
-    Returns (jobs, per-favorite error strings). Errors propagate up to the
-    Runs DB's errors_summary so silently-broken Favorite slugs are visible.
+    Returns (jobs, per-favorite error strings, region_dropped_count). Errors
+    propagate to the Runs DB's errors_summary so silently-broken Favorite slugs
+    are visible; region_dropped_count lands in discovery-metrics → jsonl_log.
 
     Jobs whose listing location is detectably outside the profile's variant
     region are dropped here — before discovery hands them on. Ambiguous
@@ -97,10 +103,11 @@ def fetch(profile: Profile, since_epoch: int) -> tuple[list[DiscoveredJob], list
     prefilter / evaluation steps handle recency.
     """
     if os.environ.get("FD_DRY_RUN") == "1":
-        return [], []
+        return [], [], 0
 
     jobs: list[DiscoveredJob] = []
     errors: list[str] = []
+    region_dropped = 0
     for fav in read_active():
         if not fav.ats_type:
             continue
@@ -123,6 +130,7 @@ def fetch(profile: Profile, since_epoch: int) -> tuple[list[DiscoveredJob], list
                 # path to every ATS): drop a job whose listing location is
                 # detectably out of region before it travels any further.
                 if location_in_variant_region(rec.get("location") or "", profile) is False:
+                    region_dropped += 1
                     continue
                 jobs.append(_convert(rec, fav.name, fav.ats_slug,
                                      fav.ats_type, fav.careers_url))
@@ -133,4 +141,4 @@ def fetch(profile: Profile, since_epoch: int) -> tuple[list[DiscoveredJob], list
             msg = f"Favorites/{fav.name}: {type(e).__name__}: {e}"
             print(f"  [{msg}]")
             errors.append(msg)
-    return jobs, errors
+    return jobs, errors, region_dropped

@@ -362,7 +362,7 @@ def jd_fetch_stage(run_id: str) -> dict:
                 enriched["raw_location"] = [
                     pick_in_region_location(all_locs, profile_for_filter)
                 ]
-            if jd_meta.get("work_mode") and cand.get("work_mode") == "on_site":
+            if jd_meta.get("work_mode") and cand.get("work_mode") in ("on_site", "unknown"):
                 enriched["work_mode"] = jd_meta["work_mode"]
             if jd_meta.get("salary_disclosed") and not cand.get("salary_disclosed"):
                 enriched["salary_disclosed"]  = True
@@ -698,6 +698,7 @@ def _build_jsonl_log(wd: Path, verdicts: list[dict]) -> str:
             "prefilter_drops":    dmetrics.get("prefilter_counts", {}),
             "effective_window":   dmetrics.get("effective_window_days"),
             "auto_promoted_favs": dmetrics.get("auto_promoted_favorites"),
+            "favorites_region_dropped": dmetrics.get("favorites_region_dropped"),
             "closed_count":       dmetrics.get("closed_count"),
             "healthy_sources":    dmetrics.get("healthy_sources", []),
             "source_errors":      (dmetrics.get("source_errors") or [])[:20],
