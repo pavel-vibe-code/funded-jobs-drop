@@ -355,12 +355,17 @@ def jd_fetch_stage(run_id: str) -> dict:
             enriched = {**cand, "jd_text": jd_text}
             if jd_meta.get("title") and not cand.get("title"):
                 enriched["title"] = jd_meta["title"]
-            if jd_meta.get("location") and not (cand.get("raw_location") or [None])[0]:
-                # Multi-location jobs (Workday additionalLocations) are judged
-                # on their best reachable location, not the ATS's "primary".
-                all_locs = [jd_meta["location"]] + (jd_meta.get("additional_locations") or [])
+            jd_locs = ([jd_meta["location"]] + (jd_meta.get("additional_locations") or [])
+                       if jd_meta.get("location") else [])
+            cur_loc = (cand.get("raw_location") or [None])[0]
+            # Resolve location from the JD when the candidate had none, OR when
+            # the JD reveals >1 location. Multi-location Workday favorites carry
+            # an unresolved "N Locations" placeholder as raw_location — judging
+            # the job on that string region-blocks it blind; pick the best
+            # reachable location instead (the ATS "primary" may be the worst).
+            if jd_locs and (not cur_loc or len(jd_locs) > 1):
                 enriched["raw_location"] = [
-                    pick_in_region_location(all_locs, profile_for_filter)
+                    pick_in_region_location(jd_locs, profile_for_filter)
                 ]
             if jd_meta.get("work_mode") and cand.get("work_mode") in ("on_site", "unknown"):
                 enriched["work_mode"] = jd_meta["work_mode"]
