@@ -116,6 +116,11 @@ WINDOW_OPTIONS = [
     ("1 month", "default"),
 ]
 
+NOTIFY_TIER_OPTIONS = [
+    ("Strong — Pursue",   "green"),
+    ("Decent — Consider", "yellow"),
+]
+
 
 def _profile_properties() -> dict:
     return {
@@ -152,6 +157,7 @@ def _profile_properties() -> dict:
         "ai50_seed_enabled":   {"checkbox": {}},
         "webhook_url":         {"url": {}},
         "webhook_enabled":     {"checkbox": {}},
+        "webhook_notify_tier": _select(NOTIFY_TIER_OPTIONS),
         # System
         "profile_hash": {"rich_text": {}},
     }

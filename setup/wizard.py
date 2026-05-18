@@ -22,6 +22,7 @@ WORK_MODE_OPTIONS = ["Remote", "Hybrid", "Onsite (includes Hybrid)"]
 SENIORITY_OPTIONS = ["entry", "mid", "senior", "staff", "principal", "executive"]
 CURRENCY_OPTIONS = ["USD", "EUR", "GBP", "CHF", "CAD", "AUD", "PLN", "CZK", "SEK"]
 WINDOW_OPTIONS = ["1 week", "2 weeks", "1 month"]
+NOTIFY_TIER_OPTIONS = ["Strong — Pursue", "Decent — Consider"]
 
 
 @dataclass
@@ -61,6 +62,7 @@ class WizardAnswers:
     ai50_seed_enabled: bool = False
     webhook_url: str = ""
     webhook_enabled: bool = False
+    webhook_notify_tier: str = "Strong — Pursue"
 
 
 def validate(answers: WizardAnswers) -> list[str]:
@@ -100,6 +102,9 @@ def validate(answers: WizardAnswers) -> list[str]:
 
     if answers.posted_since_window not in WINDOW_OPTIONS:
         errors.append(f"window '{answers.posted_since_window}' not in {WINDOW_OPTIONS}.")
+    if answers.webhook_notify_tier not in NOTIFY_TIER_OPTIONS:
+        errors.append(f"webhook_notify_tier '{answers.webhook_notify_tier}' "
+                      f"not in {NOTIFY_TIER_OPTIONS}.")
 
     if not answers.interest_description.strip():
         errors.append("interest_description required (wizard field 10a — what roles do you want?).")
@@ -130,4 +135,5 @@ def to_profile(answers: WizardAnswers) -> Profile:
         ai50_seed_enabled=answers.ai50_seed_enabled,
         webhook_url=answers.webhook_url,
         webhook_enabled=answers.webhook_enabled,
+        webhook_notify_tier=answers.webhook_notify_tier,
     )

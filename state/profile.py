@@ -60,6 +60,9 @@ class Profile:
     ai50_seed_enabled: bool = False
     webhook_url: str = ""
     webhook_enabled: bool = False
+    # Lowest match tier that fires a webhook notification: "Strong — Pursue"
+    # (default) or "Decent — Consider" (also notify on Consider).
+    webhook_notify_tier: str = "Strong — Pursue"
 
     # System
     profile_hash: str = ""
@@ -103,6 +106,8 @@ def _row_to_profile(row: dict) -> Profile:
         ai50_seed_enabled=extract_checkbox(props.get("ai50_seed_enabled")),
         webhook_url=extract_url(props.get("webhook_url")) or "",
         webhook_enabled=extract_checkbox(props.get("webhook_enabled")),
+        webhook_notify_tier=(extract_select(props.get("webhook_notify_tier"))
+                             or "Strong — Pursue"),
         profile_hash=extract_text(props.get("profile_hash")),
         page_id=row.get("id", ""),
     )
@@ -136,6 +141,7 @@ def _profile_to_props(p: Profile) -> dict:
         "ai50_seed_enabled": to_checkbox(p.ai50_seed_enabled),
         "webhook_url": to_url(p.webhook_url),
         "webhook_enabled": to_checkbox(p.webhook_enabled),
+        "webhook_notify_tier": to_select(p.webhook_notify_tier),
         "profile_hash": to_text(p.profile_hash),
     }
 

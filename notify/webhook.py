@@ -47,16 +47,29 @@ def post_webhook(webhook_url: str, message_text: str) -> Optional[str]:
         return f"{type(e).__name__}: {e}"
 
 
-def format_pursue_message(summary: str, pursue_verdicts: list[dict],
-                          metrics: dict) -> str:
-    """Compose a single message containing all new Pursue rows.
+def format_match_message(summary: str, verdicts: list[dict],
+                         metrics: dict) -> str:
+    """Compose one webhook message for a fire's notify-worthy matches.
+
+    Pursue rows get a full block (location / salary / seniority + why_fits).
+    Consider rows — present only when the user set webhook_notify_tier to
+    "Decent — Consider" — get a compact one-liner, so a Consider-tier fire
+    doesn't become a wall of text.
 
     Plain text with markdown that renders on Slack and Discord
     (bold via *...*, auto-linked URLs).
     """
+    pursue   = [v for v in verdicts if v.get("match") == "Strong — Pursue"]
+    consider = [v for v in verdicts if v.get("match") == "Decent — Consider"]
     variant = metrics.get("variant", "EU")
     today = metrics.get("started_at_iso", "")[:10]
-    header = f"*{len(pursue_verdicts)} new Pursue matches — {variant} run, {today}*"
+
+    counted = []
+    if pursue:
+        counted.append(f"{len(pursue)} Pursue")
+    if consider:
+        counted.append(f"{len(consider)} Consider")
+    header = f"*{' + '.join(counted)} new matches — {variant} run, {today}*"
 
     counts_line = (
         f"{metrics.get('total_new', 0)} new in tracker "
@@ -68,24 +81,27 @@ def format_pursue_message(summary: str, pursue_verdicts: list[dict],
 
     parts = [header, counts_line, "", summary, ""]
 
-    for v in pursue_verdicts:
-        title = v.get("title", "?")
-        company = v.get("company", "?")
-        location = v.get("location", "?")
-        salary = v.get("salary", "—")
-        seniority = v.get("seniority") or "—"
+    for v in pursue:
         why = (v.get("why_fits") or "").strip()
-        apply_url = v.get("canonical_url", "")
-
         block = [
-            f"*{title}* — {company}",
-            f"📍 {location} · 💶 {salary} · {seniority}",
+            f"*{v.get('title', '?')}* — {v.get('company', '?')}",
+            f"📍 {v.get('location', '?')} · 💶 {v.get('salary', '—')} · "
+            f"{v.get('seniority') or '—'}",
         ]
         if why:
             block.append(why)
-        block.append(f"Apply: {apply_url}")
+        block.append(f"Apply: {v.get('canonical_url', '')}")
         block.append("")  # blank line between entries
         parts.extend(block)
+
+    if consider:
+        parts.append("*Consider — worth a look:*")
+        for v in consider:
+            parts.append(
+                f"• *{v.get('title', '?')}* — {v.get('company', '?')} · "
+                f"📍 {v.get('location', '?')} · {v.get('canonical_url', '')}"
+            )
+        parts.append("")
 
     return "\n".join(parts)
 

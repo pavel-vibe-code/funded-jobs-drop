@@ -85,12 +85,13 @@ Frame this carefully:
 - `cv_url` — "Link to your CV (Drive/Notion/etc.) — optional."
 - `cv_summary` — "Paste a 2–3 paragraph summary of your background. The LLM uses this for fit scoring." (long free text)
 
-### Section 6: System settings (3 fields)
+### Section 6: System settings (4 fields)
 
 - `posted_since_window` — "How far back to look for new jobs each fire?" (select: 1 week / 2 weeks / 1 month, default 2 weeks)
 - `ai50_seed_enabled` — "Enable the AI-50 supplement? Adds 14 high-profile AI companies our standard VCs don't cover (Cohere, Runway, SSI, etc.)." (checkbox, default off)
 - `webhook_url` — "Webhook URL for notifications (Slack/Discord/Teams/Zapier — optional). Press enter to skip."
 - If webhook_url provided: `webhook_enabled` — implicitly true; also offer to send a test message after setup.
+- If webhook_url provided: `webhook_notify_tier` — "Which matches should ping your webhook? (1) **Pursue only** — just the strongest matches [default], or (2) **Pursue + Consider** — also get the decent ones. Most people start with Pursue only and widen later." (select: `Strong — Pursue` / `Decent — Consider`, default `Strong — Pursue`). If no webhook_url was given, leave the default — there's nothing to notify.
 
 ## Executing setup
 

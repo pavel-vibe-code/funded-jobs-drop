@@ -168,14 +168,15 @@ def test_recycle_feedback() -> None:
 def test_webhook_formatting() -> None:
     print("\n[webhook formatting]")
     r = _run([PYTHON, "-c",
-              "from notify.webhook import format_pursue_message; "
-              "print(format_pursue_message('summary', "
-              "[{'title':'t','company':'c','location':'l','salary':'s',"
-              "  'seniority':'sr','why_fits':'w','canonical_url':'u'}], "
+              "from notify.webhook import format_match_message; "
+              "print(format_match_message('summary', "
+              "[{'match':'Strong — Pursue','title':'t','company':'c',"
+              "  'location':'l','salary':'s','seniority':'sr',"
+              "  'why_fits':'w','canonical_url':'u'}], "
               "{'variant':'EU','started_at_iso':'2026-05-14T09:00:00+00:00',"
               " 'total_new':1,'pursue_count':1,'consider_count':0,"
               " 'skim_count':0,'cost_usd':0.0}))"])
-    _check("format_pursue_message renders", r.returncode == 0,
+    _check("format_match_message renders", r.returncode == 0,
            detail=r.stderr.strip().split("\n")[-1] if r.returncode else "")
     _check("output contains Apply: URL",
            "Apply: u" in r.stdout)

@@ -39,7 +39,7 @@ Display the result to the user, grouped into the three sections below. Use plain
 |---|---|
 | `posted_since_window` | `1 week` / `2 weeks` / `1 month` |
 | `ai50_seed_enabled` | enable the 14-company AI-50 supplement (Cohere, Cognition, etc.) |
-| `webhook_url`, `webhook_enabled` | where Pursue matches get pushed |
+| `webhook_url`, `webhook_enabled`, `webhook_notify_tier` | webhook destination + on/off, and which match tier triggers a push — `Strong — Pursue` (default) or `Decent — Consider` (also notify on Consider) |
 
 ### Section C — qa-learned rules (read-only)
 

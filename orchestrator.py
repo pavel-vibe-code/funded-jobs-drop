@@ -39,7 +39,7 @@ from pathlib import Path
 from discovery.runner import run as discovery_run
 from discovery.sources.base import DiscoveredJob
 from evaluation.jd_fetch import fetch as jd_fetch
-from notify.webhook import format_pursue_message, post_webhook
+from notify.webhook import format_match_message, post_webhook
 from state.profile import Profile, read as profile_read
 from state.runs import create as runs_create, get_last_fire_epoch
 from state.tracker import (
@@ -863,42 +863,46 @@ def finalize_stage(run_id: str) -> dict:
         runs_error = f"{type(e).__name__}: {e}"
         print(f"  warn: runs_create failed: {runs_error}; continuing to webhook")
 
-    # Webhook POST. Default: any Pursue row in this fire triggers a notification.
-    # Rescore mode writes webhook-verdicts.json with only the rows eligible for
-    # webhook (newly-Pursue from `failed` mode; empty for `stale`/`flagged`).
-    # When that override file exists, prefer it over all-verdicts.
-    webhook_override = wd / "webhook-verdicts.json"
-    if webhook_override.exists():
-        pursue_verdicts = [v for v in _load_json_or(webhook_override, [])
-                           if v.get("match") == "Strong — Pursue"]
-    else:
-        pursue_verdicts = [v for v in verdicts if v.get("match") == "Strong — Pursue"]
+    # Webhook POST. Profile.webhook_notify_tier is the floor — "Strong — Pursue"
+    # by default, "Decent — Consider" to also notify on Consider matches.
+    # Rescore mode writes webhook-verdicts.json (newly-Pursue rows only, from
+    # `failed` mode); when that override exists, prefer it over all-verdicts.
+    override = wd / "webhook-verdicts.json"
+    source = _load_json_or(override, []) if override.exists() else verdicts
+    pursue_count = sum(1 for v in source if v.get("match") == "Strong — Pursue")
+
     webhook_status = "skipped"
-    if pursue_verdicts:
-        if os.environ.get("FD_DRY_RUN") == "1":
+    if os.environ.get("FD_DRY_RUN") == "1":
+        if pursue_count:
             webhook_status = "dry-run"
-        else:
-            try:
-                profile = profile_read()
+    else:
+        try:
+            profile = profile_read()
+            notify_tiers = {"Strong — Pursue"}
+            if profile.webhook_notify_tier == "Decent — Consider":
+                notify_tiers.add("Decent — Consider")
+            notified = [v for v in source if v.get("match") in notify_tiers]
+            if notified:
                 if profile.webhook_enabled and profile.webhook_url:
-                    message = format_pursue_message(summary, pursue_verdicts, metrics)
-                    err = post_webhook(profile.webhook_url, message)
+                    err = post_webhook(
+                        profile.webhook_url,
+                        format_match_message(summary, notified, metrics))
                     webhook_status = "ok" if err is None else f"failed: {err}"
                 else:
                     webhook_status = "not_configured"
-            except Exception as e:
-                webhook_status = f"error: {type(e).__name__}: {e}"
+        except Exception as e:
+            webhook_status = f"error: {type(e).__name__}: {e}"
 
     result = {
         "runs_page_id": runs_page_id,
         "runs_error": runs_error,
-        "pursue_count": len(pursue_verdicts),
+        "pursue_count": pursue_count,
         "webhook_status": webhook_status,
     }
     (wd / "finalize-result.json").write_text(json.dumps(result, indent=2))
     runs_status = f"written ({runs_page_id})" if runs_page_id else f"FAILED ({runs_error})"
     print(f"finalize_stage: Runs row {runs_status}; "
-          f"webhook: {webhook_status}; {len(pursue_verdicts)} Pursue rows")
+          f"webhook: {webhook_status}; {pursue_count} Pursue rows")
     return result
 
 
