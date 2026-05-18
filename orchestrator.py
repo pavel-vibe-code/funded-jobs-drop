@@ -36,6 +36,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+import cost
 from discovery.runner import run as discovery_run
 from discovery.sources.base import DiscoveredJob
 from evaluation.jd_fetch import fetch as jd_fetch
@@ -666,7 +667,7 @@ def _app_version() -> str:
         return "unknown"
 
 
-def _build_jsonl_log(wd: Path, verdicts: list[dict]) -> str:
+def _build_jsonl_log(wd: Path, verdicts: list[dict], cost_breakdown: dict) -> str:
     """Aggregate per-stage state files into a JSONL debug log for Runs DB.
 
     One JSON object per stage, newline-separated. Designed to fit in ~40kB
@@ -676,7 +677,7 @@ def _build_jsonl_log(wd: Path, verdicts: list[dict]) -> str:
     but don't ride into Notion.
 
     Stages logged:
-      discovery, screener, jd_fetch, post_filter, write, finalize.
+      discovery, screener, jd_fetch, post_filter, write, cost, finalize.
     """
     lines: list[str] = []
 
@@ -750,6 +751,14 @@ def _build_jsonl_log(wd: Path, verdicts: list[dict]) -> str:
             v.get("title") for v in verdicts
             if v.get("match") == "Strong — Pursue"
         ][:10],
+    })
+
+    # Stage 4b: cost — estimated per-fire LLM spend, with per-agent breakdown.
+    _add("cost", {
+        "cost_usd":             cost_breakdown.get("cost_usd", 0.0),
+        "estimated":            cost_breakdown.get("estimated", True),
+        "price_table_version":  cost_breakdown.get("price_table_version", ""),
+        "by_agent":             cost_breakdown.get("by_agent", {}),
     })
 
     # Stage 5: finalize (assembled inline so this log captures the current
@@ -843,10 +852,16 @@ def finalize_stage(run_id: str) -> dict:
 
     metrics = {**sum_input["metrics"], "total_new": len(verdicts)}
 
+    # Estimate this fire's LLM cost from the agent I/O files on disk. See
+    # cost.py — it's an estimate (the subagent token usage isn't surfaced to
+    # Python), priced conservatively and tunable against a real invoice.
+    cost_breakdown = cost.estimate_run_cost(run_id)
+    metrics["cost_usd"] = cost_breakdown["cost_usd"]
+
     # Build a compact JSONL debug log from the per-fire /tmp/ files. Stored
     # in Runs.jsonl_log so post-mortem debugging of a Cloud Routine fire can
     # be done from Notion alone — no need to grab container logs.
-    jsonl_log = _build_jsonl_log(wd, verdicts)
+    jsonl_log = _build_jsonl_log(wd, verdicts, cost_breakdown)
 
     try:
         runs_page_id = runs_create(
@@ -898,11 +913,14 @@ def finalize_stage(run_id: str) -> dict:
         "runs_error": runs_error,
         "pursue_count": pursue_count,
         "webhook_status": webhook_status,
+        "cost_usd": metrics["cost_usd"],
+        "cost_by_agent": cost_breakdown["by_agent"],
     }
     (wd / "finalize-result.json").write_text(json.dumps(result, indent=2))
     runs_status = f"written ({runs_page_id})" if runs_page_id else f"FAILED ({runs_error})"
     print(f"finalize_stage: Runs row {runs_status}; "
-          f"webhook: {webhook_status}; {pursue_count} Pursue rows")
+          f"webhook: {webhook_status}; {pursue_count} Pursue rows; "
+          f"est. cost ${metrics['cost_usd']:.2f}")
     return result
 
 

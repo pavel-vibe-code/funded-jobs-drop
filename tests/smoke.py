@@ -50,7 +50,7 @@ def _run(args: list[str], env_extra: dict | None = None) -> subprocess.Completed
 def test_imports() -> None:
     print("\n[imports]")
     modules = [
-        "orchestrator", "recycle_feedback",
+        "orchestrator", "recycle_feedback", "cost",
         "discovery.runner", "discovery.dedup", "discovery.prefilter",
         "discovery.sources.consider", "discovery.sources.getro",
         "discovery.sources.favorites",
@@ -182,6 +182,47 @@ def test_webhook_formatting() -> None:
            "Apply: u" in r.stdout)
 
 
+def test_cost_estimation() -> None:
+    print("\n[cost estimation]")
+    sys.path.insert(0, str(REPO_ROOT))
+    import cost
+
+    run_id = "smoke-cost"
+    rd = Path(f"/tmp/fd-run/{run_id}")
+    shutil.rmtree(rd, ignore_errors=True)
+    rd.mkdir(parents=True, exist_ok=True)
+
+    # Empty run → zero cost, no agents.
+    empty = cost.estimate_run_cost(run_id)
+    _check("empty run costs 0.0", empty["cost_usd"] == 0.0)
+    _check("empty run has no agents", empty["by_agent"] == {})
+
+    # Synthetic agent I/O: 1 screener batch, 2 scorer calls, 1 summarize.
+    (rd / "candidates-batch-0.json").write_text("c" * 3800)
+    (rd / "screener-verdicts-0.json").write_text("v" * 760)
+    for i in range(2):
+        (rd / f"scorer-input-{i}.json").write_text("j" * 19000)
+        (rd / f"scorer-output-{i}.json").write_text("o" * 1900)
+    (rd / "summarize-input.json").write_text("s" * 3800)
+    (rd / "summary.json").write_text("r" * 760)
+
+    r = cost.estimate_run_cost(run_id)
+    by = r["by_agent"]
+    _check("screener call counted", by.get("screener", {}).get("calls") == 1)
+    _check("scorer calls counted", by.get("scorer", {}).get("calls") == 2)
+    _check("summarize call counted", by.get("summarize", {}).get("calls") == 1)
+    _check("screener priced as haiku", by.get("screener", {}).get("model") == "haiku")
+    _check("scorer priced as opus", by.get("scorer", {}).get("model") == "opus")
+    _check("total cost positive", r["cost_usd"] > 0)
+    _check("total == sum of per-agent costs",
+           abs(r["cost_usd"] - round(sum(a["cost_usd"] for a in by.values()), 4)) < 1e-9)
+    _check("scorer (Opus) dominates cost",
+           by["scorer"]["cost_usd"] > by["screener"]["cost_usd"])
+    _check("flagged as estimate", r["estimated"] is True)
+    _check("idempotent",
+           cost.estimate_run_cost(run_id)["cost_usd"] == r["cost_usd"])
+
+
 def main() -> int:
     print("Funded Drop smoke test (FD_DRY_RUN=1)")
     test_imports()
@@ -189,10 +230,11 @@ def main() -> int:
     test_orchestrator_synthetic_pursue()
     test_recycle_feedback()
     test_webhook_formatting()
+    test_cost_estimation()
 
     # Cleanup smoke artifacts
     for path in ("/tmp/fd-run/smoke-empty", "/tmp/fd-run/smoke-synth",
-                 "/tmp/fd-recycle/smoke-recycle"):
+                 "/tmp/fd-run/smoke-cost", "/tmp/fd-recycle/smoke-recycle"):
         shutil.rmtree(path, ignore_errors=True)
 
     print(f"\n{'='*50}")
