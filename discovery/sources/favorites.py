@@ -1,52 +1,28 @@
 """Favorites source — user-pinned companies fetched via direct ATS adapters.
 
 Each active Favorite row in the Notion Favorites DB gets its job list pulled
-from the corresponding native ATS (Greenhouse, Ashby, Lever, etc.) using the
-existing ats_adapters module ported from the parent project.
+from the corresponding native ATS (Greenhouse, Ashby, Lever, etc.) via the
+ats_adapters module ported from the parent project.
 
-This bypasses the VC-portfolio discovery entirely — used for both user-added
+`fetch_listing` returns full job records — title, location, work_mode, and
+(Ashby / Greenhouse / Lever) the complete JD. So a Favorite's jobs are
+region-filtered here, before discovery hands them on, and the JD-fetch stage
+later skips the per-job HTTP fetch whenever jd_text is already in hand. ATS
+types with no rich-listing fetcher degrade to the active-id-only path.
+
+This bypasses VC-portfolio discovery entirely — used for both user-added
 companies and (when enabled) the 14 AI-50 supplement entries.
 """
 from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from typing import Optional
 
 from discovery.prefilter import location_in_variant_region
 from discovery.sources.base import DiscoveredJob
-from evaluation.ats_adapters import (
-    active_ids_for, fetch_workday_postings, parse_workday_url,
-)
+from evaluation.ats_adapters import active_ids_for, fetch_listing, parse_workday_url
 from state.favorites import read_active
 from state.profile import Profile
-
-
-def _convert(active_id: str, favorite_name: str, favorite_slug: str,
-             ats_type: str, careers_url: str) -> DiscoveredJob:
-    """Build a sparse DiscoveredJob from an ATS active-jobs response.
-
-    The ats_adapters module exposes active_ids_for which returns just the
-    set of currently-listed job IDs. We don't get the full JD or rich fields
-    at Discovery time — that comes during Evaluation's JD fetch step.
-    """
-    # Construct a canonical URL pattern per ATS type
-    canonical_url = _construct_url(ats_type, favorite_slug, active_id, careers_url)
-    return DiscoveredJob(
-        canonical_url=canonical_url,
-        title="",  # populated at Evaluation JD-fetch time
-        company_name=favorite_name,
-        company_slug=favorite_slug,
-        raw_location=[],
-        work_mode="on_site",  # default; will be refined when JD is fetched
-        posted_at=datetime.now(timezone.utc),  # unknown until JD fetch
-        source_platform="Favorites",
-        raw={"active_id": active_id, "ats_type": ats_type, "careers_url": careers_url},
-        relevance_prior=0.5,
-        region="OTHER",  # variant filter applies at later stage
-        vc_source=None,
-        source_job_id=active_id,
-    )
 
 
 def _construct_url(ats_type: str, slug: str, job_id: str, careers_url: str = "") -> str:
@@ -76,28 +52,35 @@ def _construct_url(ats_type: str, slug: str, job_id: str, careers_url: str = "")
     return patterns.get(ats_type, f"https://example.com/unknown/{slug}/{job_id}")
 
 
-def _workday_jobs(fav, profile: Profile) -> tuple[list[DiscoveredJob], Optional[str]]:
-    """Workday Favorite → DiscoveredJobs, region-filtered before the JD fetch.
+def _convert(record: dict, favorite_name: str, favorite_slug: str,
+             ats_type: str, careers_url: str) -> DiscoveredJob:
+    """Build a DiscoveredJob from a fetch_listing record.
 
-    Workday's CXS list response carries each posting's location, so a job
-    whose location is detectably outside the profile's variant region is
-    dropped here — saving the per-job JD fetch (Workday mega-tenants like
-    MSD/Nvidia/Adobe are mostly out-of-region for an EU/US-scoped profile).
-    Ambiguous locations (no country detected) are kept and deferred to
-    post-JD screening, exactly like every other Favorite.
+    Record keys: source_job_id (required), title, location, work_mode, jd_text.
+    jd_text is the full JD when the ATS listing carried it (Ashby / Greenhouse /
+    Lever), else None — the JD-fetch stage fetches it per-job in that case.
+    A sparse record (only source_job_id, from the active-id fallback) is fine:
+    every other field defaults.
     """
-    postings, err = fetch_workday_postings(fav.careers_url)
-    if err:
-        return [], err
-    jobs: list[DiscoveredJob] = []
-    for p in postings:
-        if location_in_variant_region(p["location"], profile) is False:
-            continue  # detected out-of-region — skip before the JD fetch
-        jobs.append(_convert(p["external_path"], fav.name, fav.ats_slug,
-                             "workday", fav.careers_url))
-    print(f"  [Favorites/{fav.name}: workday — {len(postings)} postings, "
-          f"{len(jobs)} kept after pre-JD region filter]")
-    return jobs, None
+    canonical_url = _construct_url(
+        ats_type, favorite_slug, record["source_job_id"], careers_url)
+    location = record.get("location") or ""
+    return DiscoveredJob(
+        canonical_url=canonical_url,
+        title=record.get("title") or "",
+        company_name=favorite_name,
+        company_slug=favorite_slug,
+        raw_location=[location] if location else [],
+        work_mode=record.get("work_mode") or "on_site",
+        posted_at=datetime.now(timezone.utc),  # ATS listings rarely date-stamp reliably
+        source_platform="Favorites",
+        raw={},
+        relevance_prior=0.5,
+        region="OTHER",  # variant region filter applies below + at later stages
+        vc_source=None,
+        source_job_id=record["source_job_id"],
+        jd_text=record.get("jd_text") or None,
+    )
 
 
 def fetch(profile: Profile, since_epoch: int) -> tuple[list[DiscoveredJob], list[str]]:
@@ -106,8 +89,12 @@ def fetch(profile: Profile, since_epoch: int) -> tuple[list[DiscoveredJob], list
     Returns (jobs, per-favorite error strings). Errors propagate up to the
     Runs DB's errors_summary so silently-broken Favorite slugs are visible.
 
-    `since_epoch` is not used here — favorites adapters return all active
-    jobs; the runner's prefilter or evaluation step handles recency.
+    Jobs whose listing location is detectably outside the profile's variant
+    region are dropped here — before discovery hands them on. Ambiguous
+    locations (no country detected) are kept and deferred to post-JD screening.
+
+    `since_epoch` is unused — favorites adapters return all active jobs; the
+    prefilter / evaluation steps handle recency.
     """
     if os.environ.get("FD_DRY_RUN") == "1":
         return [], []
@@ -118,29 +105,30 @@ def fetch(profile: Profile, since_epoch: int) -> tuple[list[DiscoveredJob], list
         if not fav.ats_type:
             continue
         try:
-            if fav.ats_type == "workday":
-                # Workday config (tenant + pod + site) lives in careers_url;
-                # _workday_jobs region-filters before the JD fetch.
-                if not fav.careers_url:
-                    continue
-                fav_jobs, err = _workday_jobs(fav, profile)
-            else:
-                # Every other adapter keys off ats_slug + a flat active-id set.
-                if not fav.ats_slug:
-                    continue
-                active_ids, err = active_ids_for(
+            records, err = fetch_listing(
+                fav.ats_type, slug=fav.ats_slug, careers_url=fav.careers_url)
+            if records is None and err is None:
+                # ATS has no rich-listing fetcher — degrade to active IDs only.
+                ids, err = active_ids_for(
                     fav.ats_type, fav.ats_slug, careers_url=fav.careers_url)
-                fav_jobs = [
-                    _convert(job_id, fav.name, fav.ats_slug, fav.ats_type,
-                             fav.careers_url)
-                    for job_id in (active_ids or ())
-                ]
+                records = [{"source_job_id": i} for i in (ids or ())]
             if err:
                 msg = f"Favorites/{fav.name} ({fav.ats_type}:{fav.ats_slug}): {err}"
                 print(f"  [{msg}]")
                 errors.append(msg)
                 continue
-            jobs.extend(fav_jobs)
+            kept = 0
+            for rec in (records or []):
+                # Pre-discovery region filter (generalizes the v0.1.17 Workday
+                # path to every ATS): drop a job whose listing location is
+                # detectably out of region before it travels any further.
+                if location_in_variant_region(rec.get("location") or "", profile) is False:
+                    continue
+                jobs.append(_convert(rec, fav.name, fav.ats_slug,
+                                     fav.ats_type, fav.careers_url))
+                kept += 1
+            print(f"  [Favorites/{fav.name}: {fav.ats_type} — "
+                  f"{len(records or [])} listed, {kept} kept after region filter]")
         except Exception as e:
             msg = f"Favorites/{fav.name}: {type(e).__name__}: {e}"
             print(f"  [{msg}]")

@@ -164,11 +164,11 @@ def discovery_stage(run_id: str) -> dict:
     candidate_dicts = [_job_to_dict(j) for j in candidates]
     (wd / "candidates.json").write_text(json.dumps(candidate_dicts, indent=2, default=str))
 
-    # Favorites discovery is two-phase (returns IDs only; title/location fill
-    # at JD fetch time). They have no structured tags for Pass A to read, so
-    # we bypass the screener entirely — they auto-promote straight to JD
-    # fetch + Pass B. Saves Pass A LLM cost and avoids the screener marking
-    # every empty-title candidate `maybe`.
+    # Favorites bypass the Pass A screener — they auto-promote straight to the
+    # JD-fetch stage, where the deterministic post-JD prefilter and the
+    # favorites-only Pass A pass (Step 4a) screen them instead. Ashby/Greenhouse/
+    # Lever favorites also arrive with jd_text already attached (the listing
+    # carried it), so jd_fetch skips their per-job HTTP call.
     vc_candidates = [c for c in candidate_dicts if c.get("source_platform") != "Favorites"]
     fav_candidates = [c for c in candidate_dicts if c.get("source_platform") == "Favorites"]
     (wd / "auto-promote-favorites.json").write_text(
@@ -216,9 +216,8 @@ def screener_aggregate(run_id: str) -> dict:
     """Read screener-verdicts-{N}.json files, aggregate to survivors + drops.
 
     Auto-promoted Favorites (from `auto-promote-favorites.json`) merge into
-    survivors here without consuming Pass A tokens. They skip the screener
-    because their structured tags (title, location, seniority) are blank
-    until JD fetch fills them in.
+    survivors here without consuming Pass A tokens — they're screened post-JD
+    by the favorites-only Pass A pass (Step 4a) instead.
     """
     wd = _work_dir(run_id)
     candidates = _load_json_or(wd / "candidates.json", [])
@@ -250,7 +249,7 @@ def screener_aggregate(run_id: str) -> dict:
         survivors.append({
             **cand,
             "_pass_a_verdict": "auto",
-            "_pass_a_reason": "Favorites — skipped Pass A (no structured tags at discovery)",
+            "_pass_a_reason": "Favorites — auto-promoted past Pass A; screened post-JD (Step 4a)",
         })
 
     (wd / "screener-survivors.json").write_text(json.dumps(survivors, indent=2, default=str))
@@ -339,7 +338,15 @@ def jd_fetch_stage(run_id: str) -> dict:
             vc_source=cand.get("vc_source"),
         )
 
-        jd_text, jd_meta, err = jd_fetch(job)
+        # Favorites on Ashby/Greenhouse/Lever arrive from discovery with the
+        # full JD already attached (the ATS listing carried it) — use it and
+        # skip the redundant per-job HTTP fetch. VC jobs and Recruitee/Workday
+        # favorites (no JD in the listing) fall through to a real fetch.
+        attached_jd = cand.get("jd_text")
+        if attached_jd:
+            jd_text, jd_meta, err = attached_jd, {}, None
+        else:
+            jd_text, jd_meta, err = jd_fetch(job)
         if jd_text:
             # Merge ATS-parsed metadata into the candidate dict. Favorites
             # discovery leaves title/location/work_mode/salary blank — this is

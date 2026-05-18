@@ -89,6 +89,12 @@ class DiscoveredJob:
     # ── Source-specific job ID (for in-source dedup if ever needed) ───
     source_job_id: Optional[str] = None
 
+    # ── Favorites: full JD text when the ATS listing already carries it ──
+    # (Ashby / Greenhouse / Lever). When set, the JD-fetch stage uses it
+    # directly and skips the per-job HTTP fetch. None for VC jobs and for
+    # Favorites whose ATS listing has no description (Recruitee, Workday).
+    jd_text: Optional[str] = None
+
 
 def normalize_seniority(value: Optional[str]) -> Optional[Seniority]:
     """Map a source-specific seniority string to canonical enum, or None if unknown."""
