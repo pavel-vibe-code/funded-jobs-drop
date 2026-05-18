@@ -23,6 +23,7 @@ against which Pass 2 tests each candidate's job ID for set membership.
 """
 from __future__ import annotations
 
+import html
 import json
 import re
 import urllib.error
@@ -511,6 +512,194 @@ def fetch_active_ids_workday(slug: str = "", careers_url: str = "",
     if err:
         return set(), err
     return {p["external_path"] for p in postings}, None
+
+
+# === Rich-listing fetchers — full job records for the Favorites lane ==========
+# The active-id fetchers above honor the parent's validate contract: just the
+# live ID set. These return what the listing endpoint *also* carries — title,
+# location, work_mode, and (Ashby/Greenhouse/Lever) the full JD — so a Favorite
+# can be filtered before, and often without, any per-job JD fetch.
+# Record shape: {source_job_id, title, location, work_mode, jd_text}.
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_html(s: str) -> str:
+    """HTML fragment → plain text: drop tags, unescape entities, tidy whitespace."""
+    if not s:
+        return ""
+    text = html.unescape(_HTML_TAG_RE.sub(" ", s))
+    return re.sub(r"\n{3,}", "\n\n", re.sub(r"[ \t]+", " ", text)).strip()
+
+
+def _norm_work_mode(raw: str) -> Optional[str]:
+    """Map an ATS work-mode label to the remote/hybrid/on_site enum, or None."""
+    s = (raw or "").strip().lower()
+    if "remote" in s:
+        return "remote"
+    if "hybrid" in s:
+        return "hybrid"
+    if "site" in s:        # on-site / onsite / on site
+        return "on_site"
+    return None
+
+
+def _ashby_listing(slug: str = "", **_) -> Tuple[Optional[list], Optional[str]]:
+    data, err = http_get(ASHBY_API.format(slug=slug))
+    if err:
+        return None, err
+    try:
+        jobs = json.loads(data.decode("utf-8")).get("jobs", [])
+    except Exception as e:
+        return None, f"parse:{e}"
+    out = []
+    for j in jobs:
+        if not j.get("id"):
+            continue
+        out.append({
+            "source_job_id": str(j["id"]),
+            "title":     j.get("title", "") or "",
+            "location":  j.get("location", "") or "",
+            "work_mode": _norm_work_mode(j.get("workplaceType", ""))
+                         or ("remote" if j.get("isRemote") else None),
+            "jd_text":   j.get("descriptionPlain", "") or "",
+        })
+    return out, None
+
+
+def _greenhouse_listing(slug: str = "", **_) -> Tuple[Optional[list], Optional[str]]:
+    """Greenhouse jobs list with ?content=true — the description rides along, so
+    no per-job fetch is needed. Mirrors fetch_active_ids_greenhouse's host
+    fallthrough (classic vs EU data residency)."""
+    last_err = None
+    for host in GREENHOUSE_API_HOSTS:
+        data, err = http_get(host + GREENHOUSE_API_PATH.format(slug=slug)
+                              + "?content=true")
+        if err:
+            last_err = err
+            if not err.startswith("http_404"):
+                return None, err
+            continue
+        try:
+            jobs = json.loads(data.decode("utf-8")).get("jobs", [])
+        except Exception as e:
+            return None, f"parse:{e}"
+        out = []
+        for j in jobs:
+            if not j.get("id"):
+                continue
+            out.append({
+                "source_job_id": str(j["id"]),
+                "title":     j.get("title", "") or "",
+                "location":  (j.get("location") or {}).get("name", "") or "",
+                "work_mode": None,   # greenhouse listing carries no work-mode flag
+                "jd_text":   _strip_html(j.get("content", "") or ""),
+            })
+        return out, None
+    return None, last_err
+
+
+def _lever_listing(slug: str = "", **_) -> Tuple[Optional[list], Optional[str]]:
+    """Lever postings — the JD is split across descriptionPlain + lists +
+    additionalPlain; reassemble it into one jd_text."""
+    data, err = http_get(LEVER_API.format(slug=slug))
+    if err:
+        return None, err
+    try:
+        postings = json.loads(data.decode("utf-8"))
+    except Exception as e:
+        return None, f"parse:{e}"
+    if not isinstance(postings, list):
+        return None, "unexpected_shape"
+    out = []
+    for p in postings:
+        if not p.get("id"):
+            continue
+        cats = p.get("categories") or {}
+        parts = [p.get("descriptionPlain", "") or ""]
+        for lst in (p.get("lists") or []):
+            parts.append(_strip_html(lst.get("text", "") or ""))
+            parts.append(_strip_html(lst.get("content", "") or ""))
+        parts.append(p.get("additionalPlain", "") or "")
+        out.append({
+            "source_job_id": str(p["id"]),
+            "title":     p.get("text", "") or "",
+            "location":  cats.get("location", "") or p.get("country", "") or "",
+            "work_mode": _norm_work_mode(p.get("workplaceType", "")),
+            "jd_text":   "\n\n".join(x for x in parts if x).strip(),
+        })
+    return out, None
+
+
+def _recruitee_listing(slug: str = "", **_) -> Tuple[Optional[list], Optional[str]]:
+    """Recruitee offers — title/location/work_mode ride along, but the offers
+    API's `description` is empty, so jd_text is None (per-job fetch still needed)."""
+    data, err = http_get(RECRUITEE_API.format(slug=slug))
+    if err:
+        return None, err
+    try:
+        body = json.loads(data.decode("utf-8"))
+    except Exception as e:
+        return None, f"parse:{e}"
+    items = body.get("offers", []) if isinstance(body, dict) else body
+    if not isinstance(items, list):
+        return None, "unexpected_shape"
+    out = []
+    for j in items:
+        if not j.get("slug"):
+            continue
+        out.append({
+            "source_job_id": str(j["slug"]),
+            "title":     j.get("title", "") or "",
+            "location":  j.get("location", "") or "",
+            "work_mode": ("remote" if j.get("remote")
+                          else "hybrid" if j.get("hybrid")
+                          else "on_site" if j.get("on_site") else None),
+            "jd_text":   None,
+        })
+    return out, None
+
+
+def _workday_listing(careers_url: str = "", **_) -> Tuple[Optional[list], Optional[str]]:
+    """Workday CXS list — carries title + location but no description, so
+    jd_text is None (per-job CXS detail fetch still needed)."""
+    postings, err = fetch_workday_postings(careers_url)
+    if err:
+        return None, err
+    return [{
+        "source_job_id": p["external_path"],
+        "title":     p.get("title", "") or "",
+        "location":  p.get("location", "") or "",
+        "work_mode": None,
+        "jd_text":   None,
+    } for p in postings], None
+
+
+_LISTING_FETCHERS = {
+    "ashby":      _ashby_listing,
+    "greenhouse": _greenhouse_listing,
+    "lever":      _lever_listing,
+    "recruitee":  _recruitee_listing,
+    "workday":    _workday_listing,
+}
+
+
+def fetch_listing(ats: str, slug: str = "",
+                  careers_url: str = "") -> Tuple[Optional[list], Optional[str]]:
+    """Full job records for a Favorite's board, where the ATS listing carries them.
+
+    Returns (records, error). Each record: source_job_id / title / location /
+    work_mode / jd_text. jd_text is the full JD when the listing endpoint serves
+    it (Ashby, Greenhouse, Lever), else None (Recruitee, Workday — the caller
+    still fetches the JD per surviving job).
+
+    Returns (None, None) for an ATS with no rich-listing fetcher — the caller
+    falls back to active_ids_for.
+    """
+    fn = _LISTING_FETCHERS.get(ats)
+    if not fn:
+        return None, None
+    return fn(slug=slug, careers_url=careers_url)
 
 
 # === Adapter registry =========================================================
