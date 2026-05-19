@@ -10,7 +10,7 @@ subdomain + network_id. Both are static per-VC and rarely change.
 """
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import TypedDict
 
 
 class ConsiderVC(TypedDict):

@@ -9,8 +9,9 @@ in our VCs' portfolios but choose not to list publicly on the job board
 Enabled per-user via Profile.ai50_seed_enabled. The loader inserts these
 into Favorites with source="seed:ai50" and active=True.
 
-NOTE: careers_url and ats_type for each entry need verification before
-v0.1.0 release. Marked entries may shift if companies change ATS providers.
+NOTE: each entry's careers_url / ats_type / ats_slug was verified live through
+v0.1.4. Values may drift if a company later changes ATS provider — the loader
+re-probes every slug at enable time and skips or updates stale ones.
 """
 from __future__ import annotations
 
@@ -24,8 +25,6 @@ class AI50SeedEntry(TypedDict):
     ats_slug: str
 
 
-# TODO(v0.1.0): verify each careers_url and ats_type against live sites
-# before public release. Some companies may move ATS over time.
 AI50_SEED: list[AI50SeedEntry] = [
     # v0.1.4: corrected from (greenhouse, "cohere") — actual ATS is Ashby
     # (129 active jobs verified). v1.5's seed had the wrong ATS too.

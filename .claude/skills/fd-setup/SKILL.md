@@ -5,13 +5,13 @@ description: First-time setup wizard for Funded Drop. Walks the user through col
 
 # /fd-setup
 
-You are guiding the user through first-time setup of Funded Drop. Your job: collect 14 fields of answers, create the Notion workspace, write the Profile, and report success.
+You are guiding the user through first-time setup of Funded Drop. Your job: collect the user's answers across the sections below, create the Notion workspace, write the Profile, and report success.
 
 ## Welcome message
 
-Start with this (substitute the actual version from `VERSION` file):
+Start with this — replace the `{VERSION}` token with the actual version read from the `VERSION` file:
 
-> Welcome to **Funded Drop v0.1.0-alpha**
+> Welcome to **Funded Drop {VERSION}**
 >
 > Automated job search across VC-backed companies — 12 top VCs (~2,300 portfolio companies), deterministic filters + LLM scoring, results to Notion + optional webhook push.
 >
@@ -136,7 +136,7 @@ Setup complete. Created:
 Workspace config saved to ~/.claude/settings.local.json under 'funded-drop'.
 
 Next steps:
-- Run /fd-run for your first fire (won't pull yet — features ship in later phases)
+- Run /fd-run for your first fire (~5 min — fetches, scores, and writes jobs to your Tracker)
 - Edit settings via /fd-settings
 - Browse your workspace at: https://notion.so/<parent_page_id>
 ```

@@ -22,10 +22,10 @@ Display the result to the user, grouped into the three sections below. Use plain
 | `variant` | `EU` or `US` — controls VC roster + region filters |
 | `eu_include_uk_ie` | (EU only) include UK/Ireland-tagged jobs |
 | `home_country`, `home_state`, `home_city` | for residency filtering at scorer stage |
-| `work_modes` | subset of `["Remote", "Hybrid", "On-site"]` |
+| `work_modes` | subset of `["Remote", "Hybrid", "Onsite (includes Hybrid)"]` |
 | `search_outside_home` | if True, allow remote-from-elsewhere postings |
 | `willing_to_relocate` | if True, country-mismatch residency requirements don't penalize |
-| `accepted_seniority` | subset of `["junior", "mid", "senior", "staff", "principal"]` |
+| `accepted_seniority` | subset of `["entry", "mid", "senior", "staff", "principal", "executive"]` |
 | `salary_floor_amount` + `salary_floor_currency` | annual floor (USD/EUR/GBP); jobs disclosing below this are dropped at S9 prefilter |
 | `interest_description` | free text — what kind of role excites you |
 | `pursue_blockers` | free text — disqualifying patterns (e.g. "defense, gambling") |
@@ -78,7 +78,7 @@ Substitute the actual field names + Python-literal values. For lists, use Python
 
 ## Step 4 — Confirm
 
-Display the fields that changed (`old → new`). Mention that `profile_hash` was recomputed — meaning the next `/fd-run` will re-score any Tracker rows whose `profile_hash_at_eval` no longer matches (rescore behavior ships in a later phase; for now, only new candidates feel the change).
+Display the fields that changed (`old → new`). Mention that `profile_hash` was recomputed — existing Tracker rows now read as profile-stale. New candidates pick up the change automatically on the next `/fd-run`; to re-score rows already in the Tracker against the new profile, run `/fd-rescore stale`.
 
 ## Notes for routine compatibility
 

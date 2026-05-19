@@ -43,7 +43,7 @@ This is where Funded Drop will create its 4 databases.
 2. Open the page → click the **`···`** menu top-right → **Connections** → search for the integration you just created → **Add**.
 3. Copy the page URL. The URL looks like `https://www.notion.so/Funded-Drop-<32-hex>?...`. You'll paste this URL into the wizard.
 
-**Why a fresh page**: Funded Drop creates 4 databases under this parent. Putting them under a dedicated page keeps your existing Notion workspace clean. If you've used the v1.5 ai50-job-search plugin and want to reuse that workspace, create the Funded Drop page as a child of the v1.5 parent — Notion inherits sharing automatically through page nesting.
+**Why a fresh page**: Funded Drop creates 4 databases under this parent. Putting them under a dedicated page keeps your existing Notion workspace clean. You can nest this page anywhere in your workspace — Notion inherits integration sharing through page nesting, so a child of an already-shared page needs no separate share step.
 
 ### 3.3 — Run `/fd-setup`
 
@@ -69,7 +69,7 @@ The wizard asks ~14 questions in 6 sections. Allow ~5 minutes.
 | **Seniority & salary** | accepted_seniority (entry/mid/senior/staff/principal/executive), salary_floor amount + currency | Salary filter only fires when disclosed — undisclosed jobs always pass S9 |
 | **Scoring criteria** (3 free-text fields, the most important section) | `interest_description`, `pursue_blockers`, `stretch_indicators` | These shape the Pass B scorer's tier decisions. Spend a minute per field. They iterate over time as you give Tracker feedback. |
 | **CV** (optional but recommended) | cv_url, cv_summary | The scorer reads `cv_summary` as part of fit judgment |
-| **System settings** | posted_since_window, ai50_seed_enabled, webhook_url, webhook_enabled | Window: 1 week / 2 weeks / 1 month. AI-50 seed: 14 extra companies. Webhook: Slack/Discord/Teams/Zapier URL for new Strong matches. |
+| **System settings** | posted_since_window, ai50_seed_enabled, webhook_url, webhook_enabled, webhook_notify_tier | Window: 1 week / 2 weeks / 1 month. AI-50 seed: 14 extra companies. Webhook: Slack/Discord/Teams/Zapier URL + which tier triggers a push (Pursue only, or Pursue + Consider). |
 
 ### 3.4 — Verify setup completed
 
@@ -92,7 +92,7 @@ In Notion, navigate to your parent page — you'll see 4 child databases: **Trac
 
 This invokes the full pipeline against your real workspace. It will:
 
-1. Fetch ~2,500 raw jobs from 11 VC sources (Greylock typically has only a handful).
+1. Fetch ~2,500 raw jobs from 12 VC sources (Greylock typically has only a handful).
 2. Apply your prefilters (S2–S9). For a Czechia-based profile with strict country rules, ~80% drop here.
 3. Dispatch Pass A screener agents in parallel waves (~5–8 batches of 15 candidates each).
 4. Fetch JDs for screener survivors (~30 in a typical fire).
@@ -101,7 +101,7 @@ This invokes the full pipeline against your real workspace. It will:
 7. Write Runs DB row with the summary.
 8. POST webhook if you configured one AND there are new Strong matches.
 
-Wall-clock: ~5 minutes. Cost: ~$7–8 in LLM (see [README cost guide](./README.md#cost-guide)).
+Wall-clock: ~5 minutes. Cost: ~$3-4 in LLM (see [README cost guide](./README.md#cost-guide)).
 
 When it finishes you'll see `finalize_stage: Runs row written (<page_id>); webhook: <status>; N Pursue rows`. Open Tracker in Notion to review.
 
@@ -140,9 +140,9 @@ FD_NOTION_TOKEN=ntn_<your-token-from-§3.1>
 FD_PARENT_PAGE_ID=<32-char-page-id-from-§3.2-URL>
 ```
 
-That's it — **only two variables required**. At fire time, `load_workspace()` queries the children of the parent page and finds the 4 DBs by their canonical titles (`Tracker`, `Profile`, `Favorites`, `Runs`). Same UX as v1.5.
+That's it — **only two variables required**. At fire time, `load_workspace()` queries the children of the parent page and finds the 4 DBs by their canonical titles (`Tracker`, `Profile`, `Favorites`, `Runs`).
 
-To extract the parent page ID: the URL is `https://www.notion.so/Funded-Drop-36036f7666be80cda885d563c785ccbb?source=copy_link`. The 32-char hex (`36036f7666be80cda885d563c785ccbb`) is the ID. With or without hyphens both work.
+To extract the parent page ID: the URL is `https://www.notion.so/Funded-Drop-0123456789abcdef0123456789abcdef?source=copy_link`. The 32-char hex (`0123456789abcdef0123456789abcdef`) is the ID. With or without hyphens both work.
 
 **Optional escape hatch** — if you ever rename a DB in Notion UI (breaking the canonical-title lookup), override per-DB:
 
@@ -166,7 +166,6 @@ api.notion.com
 api.getro.com
 *.greenhouse.io
 boards-api.greenhouse.io
-boards-api.eu.greenhouse.io
 *.ashbyhq.com
 api.ashbyhq.com
 jobs.lever.co
@@ -184,6 +183,7 @@ apply.workable.com
 *.personio.de
 *.personio.com
 *.bamboohr.com
+*.myworkdayjobs.com
 jobs.a16z.com
 jobs.sequoiacap.com
 jobs.greylock.com
@@ -202,12 +202,14 @@ jobs.insightpartners.com
 |---|---|
 | `api.notion.com` | All Notion reads + writes |
 | **`api.getro.com`** | **All Getro VC portfolio search** (the per-VC subdomain below is only used in the `Origin` header — actual API calls go to this centralized host) |
-| `*.greenhouse.io` + `boards-api.*` | Greenhouse JD fetch (classic + EU data residency) |
+| `*.greenhouse.io` + `boards-api.greenhouse.io` | Greenhouse JD fetch |
 | `*.ashbyhq.com` + `api.ashbyhq.com` | Ashby JD fetch (list-endpoint pattern) |
 | `jobs.lever.co` + `api.lever.co` | Lever JD fetch |
 | 7× `jobs.<vc>.com` etc. | Consider portfolio listing pages (1 per VC) — needed for CSRF bootstrap |
 | 5× Getro VC subdomains | Used as `Origin` header for `api.getro.com` requests (and as `Referer`) |
 | `*.teamtailor.com`, `*.homerun.co`, `*.comeet.com`, `api.smartrecruiters.com`, `*.workable.com`, `*.recruitee.com`, `*.personio.de/com`, `*.bamboohr.com`, `*.myworkdayjobs.com` | Favorites adapters for non-Greenhouse/Ashby/Lever ATSes. Add only what your Favorites need; the 14 AI-50 seed entries are all Greenhouse/Ashby/Lever. `*.myworkdayjobs.com` covers every Workday tenant regardless of datacenter pod. |
+
+If you configured a **webhook**, also allowlist its host — e.g. `hooks.slack.com` (Slack), `discord.com` (Discord), `hooks.zapier.com` (Zapier). Without it the fire still completes; only the notification POST fails (webhook errors are non-fatal).
 
 The page-scrape fallback (which recovers wiz.io / bolt.eu / scrive.com etc. via deterministic HTML cleaning) needs arbitrary outbound HTTPS — not listable here. Those will fail under restricted egress; affected rows land as `Status: jd_fetch_failed` for manual review. That's an acceptable degradation — the deterministic-ATS path covers ~80% of jobs out of the box, and `/fd-rescore failed` can later pick up the rest if you ever loosen egress.
 
@@ -250,8 +252,8 @@ Routine context (no human in the loop):
 - Do not ask interactive questions. If something is ambiguous, pick the
   documented default. If genuinely blocked, fail loudly and exit non-zero.
 - Bounded retry only — one retry per failed agent dispatch, then proceed.
-- Webhook posts only if Profile.webhook_enabled is true AND there are
-  Strong-Pursue rows in this fire.
+- Webhook posts only if Profile.webhook_enabled is true AND the fire
+  produced rows at or above Profile.webhook_notify_tier.
 
 Then execute the /fd-run skill end-to-end and print the canonical run summary
 from /tmp/fd-run/<run_id>/finalize-result.json.

@@ -949,11 +949,14 @@ def rescore_select(run_id: str, mode: str = "failed") -> dict:
     wd = _work_dir(run_id)
     started_at = datetime.now(timezone.utc).isoformat()
 
-    profile = profile_read()
+    if os.environ.get("FD_DRY_RUN") == "1":
+        profile = _dry_run_profile()
+        rows = _load_json_or(wd / "rescore-rows-fixture.json", [])
+    else:
+        profile = profile_read()
+        rows = read_rows_for_rescore(mode, current_profile_hash=profile.profile_hash)
     profile_dict = _profile_to_dict(profile)
     (wd / "profile.json").write_text(json.dumps(profile_dict, indent=2, default=str))
-
-    rows = read_rows_for_rescore(mode, current_profile_hash=profile.profile_hash)
 
     (wd / "rescore-selected.json").write_text(json.dumps(rows, indent=2))
     (wd / "rescore-mode.json").write_text(json.dumps({
@@ -968,7 +971,10 @@ def rescore_select(run_id: str, mode: str = "failed") -> dict:
     still_failed: list[dict] = []
     for idx, row in enumerate(rows):
         url = row["canonical_url"]
-        jd_text, _jd_meta, err = fetch_jd_for_url(url)
+        if os.environ.get("FD_DRY_RUN") == "1":
+            jd_text, err = row.get("jd_text") or "", None
+        else:
+            jd_text, _jd_meta, err = fetch_jd_for_url(url)
         if jd_text:
             candidate = {
                 "canonical_url":     url,
@@ -1007,6 +1013,7 @@ def rescore_apply(run_id: str, mode: str = "failed") -> dict:
         not new discovery)
     """
     wd = _work_dir(run_id)
+    dry_run = os.environ.get("FD_DRY_RUN") == "1"
     info = _load_json_or(wd / "rescore-mode.json", {})
     profile_hash = info.get("profile_hash", "")
     selected = _load_json_or(wd / "rescore-selected.json", [])
@@ -1081,7 +1088,8 @@ def rescore_apply(run_id: str, mode: str = "failed") -> dict:
             "existing_feedback":           row.get("feedback", ""),
         }
         try:
-            update_evaluated(row["page_id"], verdict)
+            if not dry_run:
+                update_evaluated(row["page_id"], verdict)
             upserted.append(verdict)
             if mode == "failed" and tier_norm == "Strong — Pursue":
                 newly_pursue.append(verdict)

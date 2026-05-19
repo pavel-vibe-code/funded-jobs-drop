@@ -1,25 +1,22 @@
 #!/usr/bin/env python3
 """Shared ATS adapter registry — single source of truth for ATS support.
 
-Purpose: extracted from validate-jobs.py / validate-favorites.py / fetch-and-diff.py
-in v3.1.0 so adding a new ATS is a one-place change. Each adapter is a dict
-entry that defines:
+Used by the Favorites lane (`discovery/sources/favorites.py`) and the AI-50
+seed probe (`setup/ai50_seed_loader.py`). A Favorite stores its `ats_type`
+and `ats_slug` in the Favorites Notion DB, so dispatch is by stored type —
+no URL parsing.
 
-  - URL pattern: regex matching listing URLs for this ATS, with slug capture group
-  - active_ids_fetcher: callable(slug, **kwargs) -> (set[str], err) — used by
-    validate-jobs.py to confirm a candidate's ID is still in the active job set
-  - active_validate_supported: bool — True if validate-jobs can use this ATS's
-    API for confirmation. False means we recognize the URL but don't have a way
-    to confirm live state (would mark candidates "uncertain" if no fallback).
+Each adapter in `ATS_ADAPTERS` defines:
 
-The fetcher counterpart (full-job fetch + normalize for fetch-and-diff.py) lives
-in fetch-and-diff.py's own ATS_FETCHERS dict — adding a new ATS needs both
-sides registered. v3.1.0 ships the validate side here; v3.1.1 ships the
-fetch-and-diff side for Lever/Teamtailor/Homerun.
+  - active_ids_fetcher: callable(slug, **kwargs) -> (set[str], err) — the set
+    of job IDs currently active on the board, used for closure detection.
+  - active_validate_supported: bool — False means there is no API to confirm
+    live state for this ATS (only "scrape" today); `active_ids_for` short-
+    circuits those.
 
-URL patterns intentionally extract only the slug (not the job ID); active-ID
-fetching uses the slug-keyed API endpoint and returns the full active set,
-against which Pass 2 tests each candidate's job ID for set membership.
+`fetch_listing()` is the richer path: per-ATS listing endpoints returning full
+job records (title, location, work_mode, JD text), so the Favorites lane can
+build candidates without a separate per-job JD fetch.
 """
 from __future__ import annotations
 
@@ -29,11 +26,11 @@ import re
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
-from typing import Callable, Optional, Tuple
+from typing import Optional, Tuple
 
 
-# HTTP helper — shared with fetch-and-diff.py / validate-jobs.py / validate-favorites.py
-# User-Agent: a custom string ("ai50-job-search/...") trips bot-filters on some
+# HTTP helper for all ATS calls in this module.
+# User-Agent: a custom string trips bot-filters on some
 # boards (notably OpenAI's Ashby endpoint at api.ashbyhq.com/posting-api/job-board/openai
 # returns 403 for it). Use a real-browser UA to avoid that class of block. We're
 # making polite, low-volume read-only calls to public job boards — this is well
@@ -257,13 +254,10 @@ def fetch_active_ids_teamtailor(slug: str, **_) -> Tuple[set, Optional[str]]:
 
 def fetch_active_ids_homerun(slug: str, **_) -> Tuple[set, Optional[str]]:
     """Homerun — try the JSON API first, fall back to the Atom feed at
-    feed.homerun.co/<slug>. Mirrors the fallback logic in fetch-and-diff
-    so validate-jobs and fetch-and-diff agree on what's active for the
-    same board (otherwise candidates fetched via feed would consistently
-    fail validation).
+    feed.homerun.co/<slug>.
 
     Atom feed entry IDs are URN-shaped (tag:...:job_<id>); we strip to the
-    final segment so the ID matches what fetch-and-diff produces.
+    final segment so the ID matches the JSON-API form.
     """
     data, err = http_get(HOMERUN_API.format(slug=slug))
     if not err:
@@ -707,122 +701,27 @@ def fetch_listing(ats: str, slug: str = "",
 
 # === Adapter registry =========================================================
 
-# Each entry: ats_name -> {url_pattern, active_ids_fetcher, active_validate_supported}
-# Adding a new ATS = add an entry here + add fetch + normalize in fetch-and-diff.py.
+# Each entry: ats_name -> {active_ids_fetcher, active_validate_supported}.
+# Adding a new ATS = add an entry here + a listing fetcher in _LISTING_FETCHERS.
 ATS_ADAPTERS: dict = {
-    "ashby": {
-        "url_pattern": re.compile(r'^https?://(?:jobs|job-boards)\.ashbyhq\.com/([^/]+)'),
-        "active_ids_fetcher": fetch_active_ids_ashby,
-        "active_validate_supported": True,
-    },
-    "greenhouse": {
-        # Classic + EU data residency
-        "url_pattern": re.compile(r'^https?://(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io/([^/]+)'),
-        "active_ids_fetcher": fetch_active_ids_greenhouse,
-        "active_validate_supported": True,
-    },
-    "comeet": {
-        "url_pattern": re.compile(r'^https?://www\.comeet\.com/jobs/([^/]+)'),
-        "active_ids_fetcher": fetch_active_ids_comeet,
-        "active_validate_supported": True,
-    },
-    "lever": {
-        "url_pattern": re.compile(r'^https?://jobs\.lever\.co/([^/]+)'),
-        "active_ids_fetcher": fetch_active_ids_lever,
-        "active_validate_supported": True,
-    },
-    "teamtailor": {
-        # <slug>.teamtailor.com/jobs/<id>-<slug-of-title>
-        "url_pattern": re.compile(r'^https?://([a-z0-9-]+)\.teamtailor\.com/jobs/'),
-        "active_ids_fetcher": fetch_active_ids_teamtailor,
-        "active_validate_supported": True,
-    },
-    "homerun": {
-        # <slug>.homerun.co/<path> — user-facing pages on subdomain
-        "url_pattern": re.compile(r'^https?://([a-z0-9-]+)\.homerun\.co/'),
-        "active_ids_fetcher": fetch_active_ids_homerun,
-        "active_validate_supported": True,
-    },
-    "smartrecruiters": {
-        # Two listing surfaces:
-        #   careers.smartrecruiters.com/<company>/<job-id>-<slug>
-        #   jobs.smartrecruiters.com/<company>/<job-id>
-        "url_pattern": re.compile(r'^https?://(?:careers|jobs)\.smartrecruiters\.com/([^/]+)'),
-        "active_ids_fetcher": fetch_active_ids_smartrecruiters,
-        "active_validate_supported": True,
-    },
-    "workable": {
-        # apply.workable.com/<slug>/[j/<shortcode>/...]
-        "url_pattern": re.compile(r'^https?://apply\.workable\.com/([^/]+)'),
-        "active_ids_fetcher": fetch_active_ids_workable,
-        "active_validate_supported": True,
-    },
-    "recruitee": {
-        # <slug>.recruitee.com/o/<offer-slug>
-        "url_pattern": re.compile(r'^https?://([a-z0-9-]+)\.recruitee\.com/'),
-        "active_ids_fetcher": fetch_active_ids_recruitee,
-        "active_validate_supported": True,
-    },
-    "personio": {
-        # <slug>.jobs.personio.de/job/<id> — slug captured before .jobs.
-        # TLDs: .de canonical; .com / .es / .it accepted equivalently.
-        "url_pattern": re.compile(r'^https?://([a-z0-9-]+)\.jobs\.personio\.(?:de|com|es|it)/'),
-        "active_ids_fetcher": fetch_active_ids_personio,
-        "active_validate_supported": True,
-    },
-    "bamboohr": {
-        # <slug>.bamboohr.com/jobs/view.php?id=<id> or /careers/<id>
-        "url_pattern": re.compile(r'^https?://([a-z0-9-]+)\.bamboohr\.com/'),
-        "active_ids_fetcher": fetch_active_ids_bamboohr,
-        "active_validate_supported": True,
-    },
-    "workday": {
-        # {tenant}.{pod}.myworkdayjobs.com/{site}[/job/...]. The capture group
-        # (tenant) exists only to satisfy ats_from_url's contract; the fetcher
-        # needs the full careers_url (passed via the Favorites source), which
-        # carries the pod + site that a bare URL match can't supply.
-        "url_pattern": re.compile(r'^https?://([a-z0-9-]+)\.[a-z0-9]+\.myworkdayjobs\.com/'),
-        "active_ids_fetcher": fetch_active_ids_workday,
-        "active_validate_supported": True,
-    },
-    "scrape": {
-        # Generic LLM-extracted careers-page fallback. v3.2.0 implemented this in
-        # Python via direct urllib calls to api.anthropic.com (required ANTHROPIC_API_KEY).
-        # v4.0.0 reimplemented as a Claude Code agent (.claude/agents/scrape-extract.md)
-        # so users don't need an API key. Per-company opt-in via {ats: "scrape",
-        # careers_url: "..."} in custom-companies.
-        #
-        # Pipeline shape (v4.0.0): fetch-and-diff.py emits a needs_scraping.json
-        # entry; the search-roles agent dispatches scrape-extract per company in
-        # parallel; scripts/diff-scrape.py computes the new/removed delta against
-        # state. URL pattern is None — never auto-dispatched from a listing URL;
-        # only used when explicitly tagged in custom-companies.
-        # Validate side: not supported by an API, so candidates fetched via scrape
-        # land as Status: Uncertain in the tracker (user spot-checks).
-        "url_pattern": None,
-        "active_ids_fetcher": None,
-        "active_validate_supported": False,
-    },
+    "ashby":           {"active_ids_fetcher": fetch_active_ids_ashby,           "active_validate_supported": True},
+    "greenhouse":      {"active_ids_fetcher": fetch_active_ids_greenhouse,      "active_validate_supported": True},
+    "comeet":          {"active_ids_fetcher": fetch_active_ids_comeet,          "active_validate_supported": True},
+    "lever":           {"active_ids_fetcher": fetch_active_ids_lever,           "active_validate_supported": True},
+    "teamtailor":      {"active_ids_fetcher": fetch_active_ids_teamtailor,      "active_validate_supported": True},
+    "homerun":         {"active_ids_fetcher": fetch_active_ids_homerun,         "active_validate_supported": True},
+    "smartrecruiters": {"active_ids_fetcher": fetch_active_ids_smartrecruiters, "active_validate_supported": True},
+    "workable":        {"active_ids_fetcher": fetch_active_ids_workable,        "active_validate_supported": True},
+    "recruitee":       {"active_ids_fetcher": fetch_active_ids_recruitee,       "active_validate_supported": True},
+    "personio":        {"active_ids_fetcher": fetch_active_ids_personio,        "active_validate_supported": True},
+    "bamboohr":        {"active_ids_fetcher": fetch_active_ids_bamboohr,        "active_validate_supported": True},
+    # Workday: a Favorite carries its full careers_url — the fetcher needs the
+    # tenant + pod + site that a company name alone can't supply.
+    "workday":         {"active_ids_fetcher": fetch_active_ids_workday,         "active_validate_supported": True},
+    # scrape: generic careers-page fallback, no API to confirm live job state —
+    # active_ids_for short-circuits it via active_validate_supported=False.
+    "scrape":          {"active_ids_fetcher": None,                            "active_validate_supported": False},
 }
-
-
-def ats_from_url(url: Optional[str]) -> Optional[Tuple[str, str]]:
-    """Parse a listing URL to derive (ats_name, slug). Returns None if no pattern matches.
-
-    Used as the primary dispatch signal in validate-jobs.py and validate-favorites.py.
-    Adapters with `url_pattern: None` (e.g. "scrape") are skipped — they're only
-    matched when explicitly tagged in the custom-companies entry, not by URL inspection.
-    """
-    if not url:
-        return None
-    for ats, adapter in ATS_ADAPTERS.items():
-        pattern = adapter.get("url_pattern")
-        if pattern is None:
-            continue
-        m = pattern.match(url)
-        if m:
-            return ats, m.group(1)
-    return None
 
 
 def active_ids_for(ats: str, slug: str, **kwargs) -> Tuple[set, Optional[str]]:
@@ -833,8 +732,3 @@ def active_ids_for(ats: str, slug: str, **kwargs) -> Tuple[set, Optional[str]]:
     if not adapter["active_validate_supported"]:
         return set(), f"validate_not_supported:{ats}"
     return adapter["active_ids_fetcher"](slug, **kwargs)
-
-
-def supported_ats_for_validate() -> set:
-    """Names of ATS types that validate-jobs can confirm via API."""
-    return {ats for ats, adapter in ATS_ADAPTERS.items() if adapter["active_validate_supported"]}

@@ -5,8 +5,6 @@ columns rather than recreating. Schemas are the source of truth here.
 """
 from __future__ import annotations
 
-from typing import Optional
-
 from config.vcs import all_vc_names
 from state.notion_client import NotionClient, SetupError
 

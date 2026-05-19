@@ -4,11 +4,11 @@ Automated weekly job search across VC-backed companies. Pulls from 12 top-tier V
 
 Built as a Claude Code plugin. Runs on your machine via `claude` CLI, or unattended in Claude Code's Cloud Routine.
 
-**Status**: v0.1.2 — internal alpha. Public release pending.
+**Status**: v0.2.0 — public beta (limited release).
 
 ```text
                 ┌──────────────────────────────────────────────────┐
-                │   Funded Drop fire (weekly, ~5 min, ~$8 LLM)     │
+                │   Funded Drop fire (weekly, ~5 min, ~$3-4 LLM)   │
                 └──────────────────────────────────────────────────┘
                                        │
    ┌─ Discovery ──────────────────────────────────────────────────┐
@@ -43,7 +43,7 @@ cd funded-jobs-drop
 claude
 # In Claude Code:
 /fd-setup    # interactive wizard, ~5 minutes
-/fd-run      # first fire, ~5 minutes wall + ~$8 LLM
+/fd-run      # first fire, ~5 minutes wall + ~$3-4 LLM
 ```
 
 Full setup including Cloud Routine scheduling → [INSTALL.md](./INSTALL.md).
@@ -63,7 +63,7 @@ Total addressable surface: ~2,300 unique portfolio companies. After deterministi
 
 Four databases under a parent page you name (recommended: "Funded Drop" inside your existing workspace):
 
-- **Tracker** — every evaluated job. Your primary surface. Filter by Match (Strong/Decent/Stretch), Status (New/Saved/Closed/jd_fetch_failed/Dropped (feedback)), or Match quality (OK/Feedback). The `Why fits` column carries scorer reasoning grounded in your profile.
+- **Tracker** — every evaluated job. Your primary surface. Filter by Match (Strong/Decent/Stretch), Status (New / Reviewed / Applied / Not interested / Closed / jd_fetch_failed / Dropped (feedback)), or Match quality (OK/Feedback). The `Why fits` column carries scorer reasoning grounded in your profile.
 - **Profile** — single-row DB holding your search prefs (variant, location, work modes, seniority, salary floor) and the free-text fields that shape scoring (`interest_description`, `pursue_blockers`, `stretch_indicators`). Edit via `/fd-settings`.
 - **Favorites** — pinned companies, including the 14-company AI-50 seed if enabled.
 - **Runs** — one row per fire. Summary, cost, per-stage counts, errors, JSONL log.
@@ -102,7 +102,7 @@ All commands run via `claude` CLI in this repo directory (locally) or fire from 
 | Command | Purpose |
 |---|---|
 | `/fd-setup` | First-time setup wizard. Creates 4 Notion DBs + Profile row. `--repair` to patch schema, `--rewipe` to re-create after archiving existing page. |
-| `/fd-run` | Single pipeline fire. ~5 min wall, ~$8 LLM. |
+| `/fd-run` | Single pipeline fire. ~5 min wall, ~$3-4 LLM. |
 | `/fd-rescore [mode]` | Pass B re-evaluation of existing rows. Modes: `failed` (retry jd_fetch_failed), `stale` (profile drifted), `flagged` (user marked Match quality). |
 | `/fd-recycle-feedback` | Learning loop. Reads your Tracker feedback, updates `Profile.learned_*` so next fire applies them. |
 | `/fd-settings` | Edit Profile fields conversationally. |
@@ -138,10 +138,10 @@ This plugin is built to run unattended in Claude Code's Cloud Routine: fresh con
 - ✅ End-to-end fire validated against real Notion + real VC APIs + real LLM agents
 - ✅ Cloud Routine setup documented in [INSTALL.md](./INSTALL.md)
 - ⚠️ Webhook tested with payload formatting; live Slack/Discord/etc. integration is the user's first-fire test
-- ⚠️ No public release yet — repo is private until v0.2 (after broader testing)
+- ✅ Public as of v0.2.0 — limited beta release for early users
 
 See [CHANGELOG.md](./CHANGELOG.md) for release history.
 
 ## License
 
-TBD. Repo is private during alpha; license selection happens at first public release.
+Not yet licensed. License selection is pending — until a `LICENSE` file is added, default copyright applies.

@@ -8,7 +8,7 @@ Each fire writes exactly one Runs row at the end. Used for:
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 from state.config import load_workspace

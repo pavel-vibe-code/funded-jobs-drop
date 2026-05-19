@@ -2,6 +2,64 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v0.2.0 — 2026-05-19
+
+First public release — a limited beta. No pipeline behavior change from v0.1.30; this is a release-readiness pass (documentation audit, dead-code removal, wider e2e test coverage).
+
+### Changed
+- **Documentation audit.** Reconciled README + INSTALL against the code: corrected the per-fire LLM cost (~$3-4, down from a stale ~$8), the Tracker `Status` option list, the VC-source count (12, not 11), and the Greenhouse allowlist (`boards-api.eu.greenhouse.io` removed — never a real host). `/fd-setup` no longer hardcodes a stale version in its welcome banner or claims the first fire "won't pull yet"; `/fd-settings` now documents the real `work_modes` / `accepted_seniority` option sets and points at `/fd-rescore stale`. Added the missing `*.myworkdayjobs.com` egress entry and a note to allowlist the webhook host.
+- **Dead code removed.** Deleted the parent-project URL-dispatch subsystem from `evaluation/ats_adapters.py` — `ats_from_url`, `supported_ats_for_validate`, and the now-orphaned `url_pattern` regexes. v2 dispatches favorites by the Notion-stored `ats_type`, not URL parsing. Rewrote the stale module docstring, dropped 5 unused imports and an obsolete pre-v0.1.0 TODO.
+
+### Added
+- **Wider e2e coverage in `tests/smoke.py`** — the `postjd_screen_apply`, `rescore_select`, and `rescore_apply` orchestrator stages, a Decent/Consider-tier fixture, and a `jd_fetch_failed` regression fixture. Previously the suite exercised 5 of 8 stages and only the Strong/Pursue path.
+
+## v0.1.30 — 2026-05-18
+
+Multi-location Workday favorites were judged on an unresolved placeholder.
+
+### Fixed
+- **Multi-location Workday favorites resolved instead of judged on "N Locations".** Since v0.1.27 favorites carry a `raw_location` from discovery; for a Workday multi-site req that value is the placeholder `"N Locations"`, which suppressed the JD-fetch location resolver. `jd_fetch` now re-resolves the location whenever the JD reveals more than one location (not only when `raw_location` is empty), picking the best in-region city via `pick_in_region_location()`.
+
+## v0.1.29 — 2026-05-18
+
+### Added
+- **Configurable webhook notification tier.** New Profile field `webhook_notify_tier` — `Strong — Pursue` (default) pushes only the strongest matches; `Decent — Consider` also notifies on Consider-tier rows. `/fd-setup` asks for it right after the webhook URL; editable via `/fd-settings`. The webhook message renders Pursue rows as full blocks and Consider rows as compact one-liners so a Consider-tier fire isn't a wall of text.
+
+## v0.1.28 — 2026-05-18
+
+### Fixed
+- **Greenhouse favorites no longer silently dropped.** Greenhouse listings with no explicit work mode were defaulting to `on_site`, which the S3 prefilter then dropped for remote/hybrid-only profiles. Listing work mode is now `unknown` when unstated, and S2/S3 never hard-drop `unknown`. Favorites region-drops are now logged so the count is visible in the run log.
+
+## v0.1.27 — 2026-05-18
+
+### Changed
+- **Favorites carry their JD from discovery.** The Favorites source attaches each job's full record (title, location, work_mode, JD text) at discovery time via `fetch_listing`, so the pipeline skips the redundant per-job JD fetch for favorites — fewer HTTP calls on the favorites lane.
+
+## v0.1.26 — 2026-05-18
+
+### Added
+- **`fetch_listing` in `ats_adapters`.** Per-ATS listing endpoints now return full job records, not just active IDs — `_*_listing` functions for Greenhouse, Ashby, Lever, Workday, Recruitee. Foundation for the favorites-fetch optimization in v0.1.27.
+
+## v0.1.25 — 2026-05-17
+
+### Fixed
+- **`/fd-rescore flagged` now selects rows.** The `flagged` mode — meant to re-score rows the user marked with feedback — was a no-op. It now filters Tracker rows where `Match quality != OK`.
+
+## v0.1.24 — 2026-05-17
+
+### Fixed
+- **JD-fetch failures no longer mis-tiered.** Rows whose JD fetch failed were being written as "Decent — Consider" instead of left for review; they now correctly land as `Status: jd_fetch_failed` with no tier. Also corrected Recruitee canonical URL construction.
+
+## v0.1.23 — 2026-05-17
+
+### Fixed
+- **The `Dropped (feedback)` Status option now exists.** The learning loop (`recycle_feedback apply`, v0.1.20) writes `Status = "Dropped (feedback)"` on user-rejected rows — but the option was never added to the Tracker schema, so the write silently failed. Added it; `validate_or_patch` now also reconciles missing `select` options on existing DBs.
+
+## v0.1.22 — 2026-05-17
+
+### Fixed
+- **Routine Bash calls map cleanly to the allowlist.** Rewrote the `ls` / `cat` / pipe shell snippets in the `/fd-run`, `/fd-rescore`, and `/fd-recycle-feedback` skill files as single `python3` invocations, so every call matches a pattern in `.claude/settings.json` — an unattended Cloud Routine fire can't answer a permission prompt.
+
 ## v0.1.21 — 2026-05-16
 
 ### Fixed

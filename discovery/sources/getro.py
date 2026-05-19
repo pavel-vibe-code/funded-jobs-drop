@@ -13,7 +13,6 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
-from typing import Optional
 
 from config.vcs import GETRO_VCS
 from discovery.sources.base import DiscoveredJob, normalize_seniority, to_yearly
