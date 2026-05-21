@@ -4,7 +4,7 @@ Automated weekly job search across VC-backed companies. Pulls from 12 top-tier V
 
 Built as a Claude Code plugin. Runs on your machine via `claude` CLI, or unattended in Claude Code's Cloud Routine.
 
-**Status**: v0.2.0 — public beta (limited release).
+**Status**: v1.0 (public)
 
 ```text
                 ┌──────────────────────────────────────────────────┐
