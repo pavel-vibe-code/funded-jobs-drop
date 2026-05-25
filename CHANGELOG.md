@@ -2,6 +2,13 @@
 
 All notable changes to Funded Drop. Format follows [Keep a Changelog](https://keepachangelog.com/), versioning is [SemVer](https://semver.org/).
 
+## v1.0.0 — 2026-05-25
+
+First stable public release. Funded Drop graduates from beta — the full pipeline (discovery → two-pass LLM evaluation → Notion → notify) runs end-to-end against real workspaces and is considered stable.
+
+### Added
+- **Secondary `(company, title)` dedup.** After the canonical-URL dedup, a second pass collapses rows that share a normalized `(company_name, title)` — catching the LinkedIn multi-posting pattern where one role is published N times under N unique job IDs (observed: Camunda posting the same role 4× in a single fire). First-seen wins, preserving the source-priority ordering. (PR #2)
+
 ## v0.2.0 — 2026-05-19
 
 First public release — a limited beta. No pipeline behavior change from v0.1.30; this is a release-readiness pass (documentation audit, dead-code removal, wider e2e test coverage).

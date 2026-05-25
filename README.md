@@ -31,7 +31,7 @@ Built as a Claude Code plugin. Runs on your machine via `claude` CLI, or unatten
    └──────────────────────────────────────────────────────────────┘
                                        │
    ┌─ Notify ─────────────────────────────────────────────────────┐
-   │  Webhook POST on new Strong matches (Slack/Discord/etc.)     │
+   │  Webhook POST on new matches (Slack/Discord/etc.)            │
    └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -138,7 +138,7 @@ This plugin is built to run unattended in Claude Code's Cloud Routine: fresh con
 - ✅ End-to-end fire validated against real Notion + real VC APIs + real LLM agents
 - ✅ Cloud Routine setup documented in [INSTALL.md](./INSTALL.md)
 - ⚠️ Webhook tested with payload formatting; live Slack/Discord/etc. integration is the user's first-fire test
-- ✅ Public as of v0.2.0 — limited beta release for early users
+- ✅ Public release — v1.0.0 (stable)
 
 See [CHANGELOG.md](./CHANGELOG.md) for release history.
 
